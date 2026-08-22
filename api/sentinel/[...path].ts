@@ -36,8 +36,9 @@ const STRIP_REQUEST = new Set([
   'x-vercel-id',
 ]);
 
-// Node runtime (Vercel's default for /api). Edge was skipped during build.
-export const config = { runtime: 'nodejs20.x' };
+// Edge runtime: this handler uses the Web Request/Response API, which the
+// Node runtime on /api does not accept (it expects (req, res)).
+export const config = { runtime: 'edge' };
 
 export default async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
