@@ -1,0 +1,30 @@
+# deps / build
+node_modules
+dist
+dist-ssr
+
+# secrets — never commit
+.env
+.env.local
+.env.*.local
+*.pem
+
+# logs (dev.log embeds the Mapbox token in proxied URLs)
+*.log
+logs
+
+# tooling / editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# test + scratch output
+.playwright-mcp
+coverage
+*.local

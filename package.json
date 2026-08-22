@@ -1,0 +1,40 @@
+{
+  "name": "sentinel-command-center",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mapbox/maki": "^8.2.0",
+    "@mapbox/mapbox-gl-draw": "^1.5.1",
+    "@tanstack/react-query": "^5.101.4",
+    "date-fns": "^4.4.0",
+    "hls.js": "^1.7.1",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "lucide-react": "^1.33.0",
+    "mapbox-gl": "^3.29.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/mapbox__mapbox-gl-draw": "^1.4.9",
+    "@types/mapbox-gl": "^3.4.1",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "oxlint": "^1.75.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  }
+}
