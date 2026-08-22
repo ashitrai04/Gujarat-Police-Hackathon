@@ -36,7 +36,8 @@ const STRIP_REQUEST = new Set([
   'x-vercel-id',
 ]);
 
-export const config = { runtime: 'edge' };
+// Node runtime (Vercel's default for /api). Edge was skipped during build.
+export const config = { runtime: 'nodejs20.x' };
 
 export default async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -56,7 +57,7 @@ export default async function handler(req: Request): Promise<Response> {
     upstream = await fetch(target, {
       method: req.method,
       headers,
-      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req.body,
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.text(),
       redirect: 'follow', // keep the ?cookieCheck=1 hop server-side
     });
   } catch (err) {
