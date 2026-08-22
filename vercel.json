@@ -1,7 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    { "source": "/api/sentinel/:path*", "destination": "/api/sentinel/:path*" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/sentinel/:path*",
+      "destination": "https://live.corp8.cloud/:path*"
+    },
+    {
+      "source": "/((?!sentinel/).*)",
+      "destination": "/index.html"
+    }
   ]
 }

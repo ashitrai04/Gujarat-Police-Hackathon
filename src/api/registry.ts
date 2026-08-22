@@ -18,7 +18,14 @@ import type { Camera, CamType, Domain } from './types';
  * CORS headers, so browsers abort it ("Failed to fetch"). The final host does
  * send `access-control-allow-origin: *`, so going straight there works.
  */
-const DEFAULT_PROXY = import.meta.env.DEV ? '/sentinel' : '/api/sentinel';
+/**
+ * Same path in both environments: a Vite proxy locally (vite.config.ts) and a
+ * Vercel rewrite in production (vercel.json). Because the rewrite is
+ * same-origin from the browser's point of view, CORS never applies — which
+ * sidesteps the host's duplicated Access-Control-Allow-Origin header entirely.
+ * Vercel serves over HTTPS, so the `Secure` session cookie also works.
+ */
+const DEFAULT_PROXY = '/sentinel';
 
 export const SENTINEL_HOST =
   import.meta.env.VITE_SENTINEL_HOST || DEFAULT_PROXY;
