@@ -20,8 +20,19 @@ export interface StreamHealth {
 }
 
 const TIMEOUT_MS = 15000;
-/** Gap between probes on one worker. The host 5xx's a burst of requests. */
-const PACE_MS = 220;
+/**
+ * Gap between probes on one worker. Measured on the deployed site: 30 probes
+ * fired back to back had cameras 7, 9, 10, 11 and 12 answer 502, and the same
+ * five returned 206 when spaced 3s apart. The host throttles bursts, so the
+ * sweep is deliberately unhurried — it only has to finish inside the poll.
+ */
+const PACE_MS = 500;
+
+/** A response that says nothing about the camera, only about the moment. */
+function transient(res: Response | null): boolean {
+  if (!res) return true; // network error or timeout
+  return res.status === 429 || (res.status >= 500 && res.status !== 500);
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -67,10 +78,11 @@ export async function probeCamera(cam: Camera): Promise<StreamHealth> {
         return { state: 'live-only', route: 'hls', checkedAt };
       }
     }
-    // A definite 500 "muxer instance not available" needs no second look;
-    // a network error or timeout does.
-    if (hls && hls.status !== 500 && prog) break;
-    if (attempt === 0) await sleep(800);
+    // Upstream's own 500 is a real answer — "muxer instance not available" —
+    // and needs no second look. A 502/503/429 or a timeout is the throttle
+    // talking, not the camera, so that is the only case worth retrying.
+    if (!transient(prog) && !transient(hls)) break;
+    if (attempt === 0) await sleep(1500);
   }
 
   return { state: 'unavailable', route: null, checkedAt };
@@ -79,7 +91,7 @@ export async function probeCamera(cam: Camera): Promise<StreamHealth> {
 /** Probe the estate a few at a time — the host throttles request bursts. */
 export async function probeAll(
   cams: Camera[],
-  concurrency = 3,
+  concurrency = 2,
 ): Promise<Record<string, StreamHealth>> {
   const out: Record<string, StreamHealth> = {};
   let cursor = 0;
