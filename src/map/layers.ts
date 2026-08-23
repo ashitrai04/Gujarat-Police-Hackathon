@@ -19,6 +19,10 @@ export const SRC = {
   route: 'sentinel-route',
   routeStops: 'sentinel-route-stops',
   gaps: 'sentinel-gaps',
+  gisState: 'sentinel-gis-state',
+  gisDistricts: 'sentinel-gis-districts',
+  gisHighways: 'sentinel-gis-highways',
+  gisRoads: 'sentinel-gis-roads',
 } as const;
 
 export const LYR = {
@@ -37,6 +41,13 @@ export const LYR = {
   routeStops: 'route-stops',
   routeStopLabels: 'route-stop-labels',
   gapsFill: 'gaps-fill',
+  gisStateLine: 'gis-state-line',
+  gisDistrictLine: 'gis-district-line',
+  gisDistrictFill: 'gis-district-fill',
+  gisHighwayGlow: 'gis-highway-glow',
+  gisHighwayLine: 'gis-highway-line',
+  gisHighwayLabel: 'gis-highway-label',
+  gisRoadLine: 'gis-road-line',
 } as const;
 
 const EMPTY: GeoJSONFeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -380,3 +391,155 @@ export function setVisible(map: mapboxgl.Map, layerId: string, visible: boolean)
     map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
   }
 }
+
+/* ── Gujarat GIS overlays (supplied GeoPackage) ───────────────────── */
+
+/**
+ * Route-tracing reference layers. These sit *under* the camera pins and the
+ * ANPR route line — they are the board a route is drawn on, not the subject —
+ * so every one of them is inserted beneath the camera cluster layer.
+ *
+ * Colours are deliberately loud: this is an overlay an operator switches on to
+ * read a vehicle's path across the state, and a muted line disappears against
+ * satellite imagery.
+ */
+export function ensureGisLayers(
+  map: mapboxgl.Map,
+  layer: 'state' | 'districts' | 'highways' | 'roads',
+  data: GeoJSONFeatureCollection,
+) {
+  const below = map.getLayer(LYR.clusters) ? LYR.clusters : undefined;
+
+  if (layer === 'state') {
+    if (!map.getSource(SRC.gisState)) {
+      map.addSource(SRC.gisState, { type: 'geojson', data: data as never });
+    } else {
+      setData(map, SRC.gisState, data);
+    }
+    if (!map.getLayer(LYR.gisStateLine)) {
+      map.addLayer({
+        id: LYR.gisStateLine,
+        type: 'line',
+        source: SRC.gisState,
+        paint: {
+          'line-color': '#FDE047',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.6, 10, 3.2],
+          'line-opacity': 0.95,
+        },
+      }, below);
+    }
+    return;
+  }
+
+  if (layer === 'districts') {
+    if (!map.getSource(SRC.gisDistricts)) {
+      map.addSource(SRC.gisDistricts, { type: 'geojson', data: data as never });
+    } else {
+      setData(map, SRC.gisDistricts, data);
+    }
+    if (!map.getLayer(LYR.gisDistrictFill)) {
+      map.addLayer({
+        id: LYR.gisDistrictFill,
+        type: 'fill',
+        source: SRC.gisDistricts,
+        // `active_feed` comes from the supplied data: districts that actually
+        // have a camera on them are worth picking out from the rest.
+        paint: {
+          'fill-color': ['case', ['>', ['get', 'active_feed'], 0], '#A855F7', '#6366F1'],
+          'fill-opacity': ['case', ['>', ['get', 'active_feed'], 0], 0.16, 0.05],
+        },
+      }, below);
+      map.addLayer({
+        id: LYR.gisDistrictLine,
+        type: 'line',
+        source: SRC.gisDistricts,
+        paint: {
+          'line-color': '#C4B5FD',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 1.6],
+          'line-opacity': 0.85,
+        },
+      }, below);
+    }
+    return;
+  }
+
+  if (layer === 'highways') {
+    if (!map.getSource(SRC.gisHighways)) {
+      map.addSource(SRC.gisHighways, { type: 'geojson', data: data as never });
+    } else {
+      setData(map, SRC.gisHighways, data);
+    }
+    if (!map.getLayer(LYR.gisHighwayLine)) {
+      // Glow underneath keeps the line readable over bright terrain.
+      map.addLayer({
+        id: LYR.gisHighwayGlow,
+        type: 'line',
+        source: SRC.gisHighways,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#F97316',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 3.5, 12, 9],
+          'line-opacity': 0.22,
+          'line-blur': 3,
+        },
+      }, below);
+      map.addLayer({
+        id: LYR.gisHighwayLine,
+        type: 'line',
+        source: SRC.gisHighways,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#FB923C',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.9, 12, 3.2],
+          'line-opacity': 0.95,
+        },
+      }, below);
+      map.addLayer({
+        id: LYR.gisHighwayLabel,
+        type: 'symbol',
+        source: SRC.gisHighways,
+        minzoom: 8,
+        filter: ['has', 'ref'],
+        layout: {
+          'symbol-placement': 'line',
+          'text-field': ['get', 'ref'],
+          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+          'text-size': 10,
+        },
+        paint: {
+          'text-color': '#FFEDD5',
+          'text-halo-color': '#1A0F05',
+          'text-halo-width': 1.4,
+        },
+      }, below);
+    }
+    return;
+  }
+
+  if (!map.getSource(SRC.gisRoads)) {
+    map.addSource(SRC.gisRoads, { type: 'geojson', data: data as never });
+  } else {
+    setData(map, SRC.gisRoads, data);
+  }
+  if (!map.getLayer(LYR.gisRoadLine)) {
+    map.addLayer({
+      id: LYR.gisRoadLine,
+      type: 'line',
+      source: SRC.gisRoads,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#22D3EE',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 12, 1.8],
+        'line-opacity': 0.7,
+      },
+    }, below);
+  }
+}
+
+/** Layer ids belonging to each GIS overlay, for visibility toggling. */
+export const GIS_LAYER_IDS: Record<string, string[]> = {
+  state: [LYR.gisStateLine],
+  districts: [LYR.gisDistrictFill, LYR.gisDistrictLine],
+  highways: [LYR.gisHighwayGlow, LYR.gisHighwayLine, LYR.gisHighwayLabel],
+  roads: [LYR.gisRoadLine],
+};

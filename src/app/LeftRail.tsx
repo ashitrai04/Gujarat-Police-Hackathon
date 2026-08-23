@@ -11,6 +11,19 @@ import { useBreakpoint } from './useBreakpoint';
 import { DOMAIN_COLOR, DOMAIN_LABEL, type CameraStatus, type Domain } from '@/api/types';
 import { Button, Empty, SectionHeader, StatusDot, ToggleRow } from '@/components/ui';
 import { DOMAIN_MARKER_SRC } from '@/map/icons';
+import type { GisLayer } from '@/app/store';
+
+/**
+ * Legend for the supplied GeoPackage layers. The swatch mirrors what the map
+ * draws — a bar for line layers, a block for the district fill — so the rail
+ * reads as a key rather than a list of checkboxes.
+ */
+const GIS_META: { key: GisLayer; label: string; colour: string; shape: 'line' | 'area' }[] = [
+  { key: 'state', label: 'State boundary', colour: '#FDE047', shape: 'line' },
+  { key: 'districts', label: 'Districts', colour: '#A855F7', shape: 'area' },
+  { key: 'highways', label: 'National highways', colour: '#FB923C', shape: 'line' },
+  { key: 'roads', label: 'Major roads', colour: '#22D3EE', shape: 'line' },
+];
 
 const POI_META: Record<PoiLayer, { label: string; icon: typeof Hospital; colour: string }> = {
   hospital: { label: 'Hospitals', icon: Hospital, colour: '#F472B6' },
@@ -236,6 +249,34 @@ export function LeftRail() {
           label="Coverage gaps"
           icon={<Activity size={12} style={{ color: '#EF4444' }} />}
         />
+      </div>
+
+      <Divider />
+
+      {/* Gujarat GIS — the reference geography a vehicle route is read against */}
+      <SectionHeader>Gujarat GIS</SectionHeader>
+      <div className="px-1.5 pb-1">
+        {GIS_META.map((g) => (
+          <ToggleRow
+            key={g.key}
+            on={s.gis.includes(g.key)}
+            onClick={() => s.toggleGis(g.key)}
+            colour={g.colour}
+            label={g.label}
+            icon={
+              <span
+                className="inline-block shrink-0 rounded-full"
+                style={{
+                  width: 13,
+                  height: g.shape === 'line' ? 3 : 11,
+                  borderRadius: g.shape === 'line' ? 2 : 3,
+                  background: g.colour,
+                  boxShadow: `0 0 6px ${g.colour}`,
+                }}
+              />
+            }
+          />
+        ))}
       </div>
 
       <Divider />

@@ -7,13 +7,17 @@ import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import { BASE_STYLES, useStore } from '@/app/store';
-import { loadBoundaries, loadPois, buildGapAreas } from '@/geo/loaders';
+import type { GisLayer } from '@/app/store';
+import type { GeoJSONFeatureCollection } from '@/api/types';
+import { loadBoundaries, loadGis, loadPois, buildGapAreas } from '@/geo/loaders';
 import {
+  GIS_LAYER_IDS,
   LYR,
   SRC,
   ensureBoundaryLayers,
   ensureCameraLayers,
   ensureGapLayers,
+  ensureGisLayers,
   ensurePoiLayers,
   ensureRouteLayers,
   ensureZoneLayers,
@@ -69,6 +73,21 @@ export function MapView() {
   useEffect(() => {
     loadPois(s.pois).then(setPois);
   }, [s.pois]);
+
+  /* GIS overlays are fetched only once switched on — the road layers are
+     ~2.8 MB each and would otherwise stall the map on open. */
+  const [gis, setGis] = useState<Record<string, GeoJSONFeatureCollection>>({});
+  useEffect(() => {
+    const missing = s.gis.filter((g) => !gis[g]);
+    if (!missing.length) return;
+    let live = true;
+    void Promise.all(missing.map(async (g) => [g, await loadGis(g)] as const)).then(
+      (pairs) => live && setGis((prev) => ({ ...prev, ...Object.fromEntries(pairs) })),
+    );
+    return () => {
+      live = false;
+    };
+  }, [s.gis, gis]);
 
   /* ── Init ─────────────────────────────────────────────────── */
   useEffect(() => {
@@ -160,6 +179,9 @@ export function MapView() {
     if (boundaries) ensureBoundaryLayers(m, boundaries);
     if (zones) ensureZoneLayers(m, zones);
     if (pois) ensurePoiLayers(m, pois);
+    for (const [layer, data] of Object.entries(gis)) {
+      ensureGisLayers(m, layer as GisLayer, data);
+    }
     if (cameras) ensureGapLayers(m, buildGapAreas(cameras));
     if (geo) ensureCameraLayers(m, geo);
     ensureRouteLayers(m);
@@ -170,12 +192,15 @@ export function MapView() {
     setVisible(m, LYR.heat, st.showHeat);
     setVisible(m, LYR.gapsFill, st.showGaps);
     setVisible(m, LYR.poiPoint, st.pois.length > 0);
+    for (const [layer, ids] of Object.entries(GIS_LAYER_IDS)) {
+      for (const id of ids) setVisible(m, id, st.gis.includes(layer as GisLayer));
+    }
       setRouteProgress(m, st.trace, st.traceProgress);
     } catch (err) {
       // A style swap can land mid-apply; the next style.load re-runs this.
       console.warn('[map] layer apply deferred:', err);
     }
-  }, [boundaries, zones, pois, cameras, geo]);
+  }, [boundaries, zones, pois, cameras, geo, gis]);
 
   useEffect(() => {
     const m = map.current;
@@ -200,7 +225,10 @@ export function MapView() {
     setVisible(m, LYR.heat, s.showHeat);
     setVisible(m, LYR.gapsFill, s.showGaps);
     setVisible(m, LYR.poiPoint, s.pois.length > 0);
-  }, [s.showBoundaries, s.showHeat, s.showGaps, s.pois, ready, styleTick]);
+    for (const [layer, ids] of Object.entries(GIS_LAYER_IDS)) {
+      for (const id of ids) setVisible(m, id, s.gis.includes(layer as GisLayer));
+    }
+  }, [s.showBoundaries, s.showHeat, s.showGaps, s.pois, s.gis, ready, styleTick]);
 
   /* ── Globe + pitch ────────────────────────────────────────── */
   useEffect(() => {

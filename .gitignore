@@ -28,3 +28,6 @@ logs
 .playwright-mcp
 coverage
 *.local
+
+# Source GeoPackage — layers are exported to public/geo as GeoJSON
+gujarat_shp

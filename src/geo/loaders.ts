@@ -7,7 +7,7 @@
  */
 
 import type { Camera, GeoJSONFeatureCollection } from '@/api/types';
-import type { PoiLayer } from '@/app/store';
+import type { GisLayer, PoiLayer } from '@/app/store';
 
 const EMPTY: GeoJSONFeatureCollection = { type: 'FeatureCollection', features: [] };
 const cache = new Map<string, GeoJSONFeatureCollection>();
@@ -30,6 +30,15 @@ async function loadOnce(path: string): Promise<GeoJSONFeatureCollection> {
 
 /** Gujarat district boundaries (2011 census districts, via udit-001/india-maps-data). */
 export const loadBoundaries = () => loadOnce('/geo/gujarat-districts.geojson');
+
+/**
+ * Gujarat GIS layers, converted from the supplied GeoPackage.
+ *
+ * Loaded on demand rather than up front: the road layers are ~2.8 MB each, and
+ * fetching them before anyone asks would stall the map on open for a layer most
+ * sessions never turn on.
+ */
+export const loadGis = (layer: GisLayer) => loadOnce(`/geo/gj-${layer}.geojson`);
 
 /** Merge the selected OSM POI kinds into one collection. */
 export async function loadPois(kinds: PoiLayer[]): Promise<GeoJSONFeatureCollection> {

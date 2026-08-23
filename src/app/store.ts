@@ -21,6 +21,13 @@ export const BASE_STYLES: Record<BaseStyle, { label: string; url: string }> = {
 
 export type PoiLayer = 'hospital' | 'police' | 'fuel' | 'bus_station';
 
+/**
+ * Gujarat GIS overlays from the supplied GeoPackage. The file's `cameras`
+ * layer is deliberately absent — camera geography comes from the live
+ * registry, not a static snapshot.
+ */
+export type GisLayer = 'state' | 'districts' | 'highways' | 'roads';
+
 export type RightPanel =
   | { kind: 'none' }
   | { kind: 'camera'; cameraId: string }
@@ -50,6 +57,7 @@ interface State {
   showHeat: boolean;
   showGaps: boolean;
   pois: PoiLayer[];
+  gis: GisLayer[];
   toggleDomain: (d: Domain) => void;
   toggleStatus: (s: CameraStatus) => void;
   setAnprOnly: (v: boolean) => void;
@@ -58,6 +66,7 @@ interface State {
   toggleHeat: () => void;
   toggleGaps: () => void;
   togglePoi: (p: PoiLayer) => void;
+  toggleGis: (g: GisLayer) => void;
   clearFilters: () => void;
 
   /* Selection */
@@ -141,6 +150,7 @@ export const useStore = create<State>()(
   showHeat: false,
   showGaps: false,
   pois: [],
+  gis: [],
   toggleDomain: (d) =>
     set((s) => ({
       domains: s.domains.includes(d)
@@ -161,6 +171,10 @@ export const useStore = create<State>()(
   togglePoi: (p) =>
     set((s) => ({
       pois: s.pois.includes(p) ? s.pois.filter((x) => x !== p) : [...s.pois, p],
+    })),
+  toggleGis: (g) =>
+    set((s) => ({
+      gis: s.gis.includes(g) ? s.gis.filter((x) => x !== g) : [...s.gis, g],
     })),
   clearFilters: () =>
     set({
@@ -264,6 +278,7 @@ export const useStore = create<State>()(
         dockOpen: s.dockOpen,
         railCollapsed: s.railCollapsed,
         pois: s.pois,
+        gis: s.gis,
         showBoundaries: s.showBoundaries,
         dockH: s.dockH,
       }),
