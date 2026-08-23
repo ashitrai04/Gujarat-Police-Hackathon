@@ -418,13 +418,15 @@ export function ensureGisLayers(
       setData(map, SRC.gisState, data);
     }
     if (!map.getLayer(LYR.gisStateLine)) {
+      // Electric lime, not red: the districts are neon magenta and a red state
+      // line sat close enough in hue that the two edges read as one layer.
       map.addLayer({
         id: LYR.gisStateGlow,
         type: 'line',
         source: SRC.gisState,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#FF1744',
+          'line-color': '#CCFF00',
           'line-width': ['interpolate', ['linear'], ['zoom'], 5, 7, 10, 14],
           'line-opacity': 0.3,
           'line-blur': 6,
@@ -436,7 +438,7 @@ export function ensureGisLayers(
         source: SRC.gisState,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#FF1744',
+          'line-color': '#CCFF00',
           'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.8, 10, 3.4],
           'line-opacity': 1,
         },
