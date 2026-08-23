@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/sentinel/:path*",
-      "destination": "/api/sentinel/:path*"
+      "destination": "/api/sentinel?__p=:path*"
     },
     {
       "source": "/((?!api/|sentinel/).*)",

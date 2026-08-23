@@ -30,6 +30,13 @@ const UPSTREAM = HOSTS[0];
  *
  * So: forward the range, resolve the redirect here, keep the cookie jar for
  * the length of the handshake, and hand the browser one clean CORS header.
+ *
+ * Routing note: this is a single function, not `sentinel/[...path].js`. The
+ * bracket catch-all is a Next.js filename convention — on a plain Vite project
+ * it deployed without error and then 404'd every request, while /api/ping in
+ * the same deployment answered fine. `vercel.json` therefore rewrites
+ * `/sentinel/:path*` to `/api/sentinel?__p=:path*` and the path is read back
+ * out of the query here.
  */
 
 /** Headers that must not be relayed upstream — Cloudflare bot-challenges them. */
@@ -60,8 +67,15 @@ function jar(res, existing = '') {
 
 export default async function handler(req) {
   const url = new URL(req.url);
-  const path = url.pathname.replace(/^\/api\/sentinel/, '').replace(/^\/sentinel/, '');
-  let target = UPSTREAM + path + url.search;
+
+  // The rewrite parks the real path in `__p`; everything else in the query
+  // belongs to the upstream request (e.g. ?cookieCheck=1).
+  const params = new URLSearchParams(url.search);
+  const routed = params.get('__p');
+  params.delete('__p');
+  const path = '/' + (routed ?? url.pathname.replace(/^\/api\/sentinel\/?/, '')).replace(/^\/+/, '');
+  const query = params.toString() ? '?' + params.toString() : '';
+  let target = UPSTREAM + path + query;
 
   const out = new Headers();
   req.headers.forEach((value, key) => {
@@ -80,12 +94,12 @@ export default async function handler(req) {
   let lastErr = '';
   for (const host of HOSTS) {
     try {
-      res = await fetch(host + path + url.search, {
+      res = await fetch(host + path + query, {
         method: req.method,
         headers: out,
         redirect: 'manual',
       });
-      target = host + path + url.search;
+      target = host + path + query;
       break;
     } catch (err) {
       lastErr = err.message;
