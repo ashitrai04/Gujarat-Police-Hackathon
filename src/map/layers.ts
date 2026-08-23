@@ -41,6 +41,7 @@ export const LYR = {
   routeStops: 'route-stops',
   routeStopLabels: 'route-stop-labels',
   gapsFill: 'gaps-fill',
+  gisStateGlow: 'gis-state-glow',
   gisStateLine: 'gis-state-line',
   gisDistrictLine: 'gis-district-line',
   gisDistrictFill: 'gis-district-fill',
@@ -418,13 +419,26 @@ export function ensureGisLayers(
     }
     if (!map.getLayer(LYR.gisStateLine)) {
       map.addLayer({
+        id: LYR.gisStateGlow,
+        type: 'line',
+        source: SRC.gisState,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#FF1744',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 7, 10, 14],
+          'line-opacity': 0.3,
+          'line-blur': 6,
+        },
+      }, below);
+      map.addLayer({
         id: LYR.gisStateLine,
         type: 'line',
         source: SRC.gisState,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#FDE047',
-          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.6, 10, 3.2],
-          'line-opacity': 0.95,
+          'line-color': '#FF1744',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1.8, 10, 3.4],
+          'line-opacity': 1,
         },
       }, below);
     }
@@ -445,8 +459,8 @@ export function ensureGisLayers(
         // `active_feed` comes from the supplied data: districts that actually
         // have a camera on them are worth picking out from the rest.
         paint: {
-          'fill-color': ['case', ['>', ['get', 'active_feed'], 0], '#A855F7', '#6366F1'],
-          'fill-opacity': ['case', ['>', ['get', 'active_feed'], 0], 0.16, 0.05],
+          'fill-color': ['case', ['>', ['get', 'active_feed'], 0], '#FF4FD8', '#C026D3'],
+          'fill-opacity': ['case', ['>', ['get', 'active_feed'], 0], 0.18, 0.06],
         },
       }, below);
       map.addLayer({
@@ -454,9 +468,9 @@ export function ensureGisLayers(
         type: 'line',
         source: SRC.gisDistricts,
         paint: {
-          'line-color': '#C4B5FD',
-          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 1.6],
-          'line-opacity': 0.85,
+          'line-color': '#FF6FE0',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.8, 10, 1.9],
+          'line-opacity': 0.9,
         },
       }, below);
     }
@@ -538,7 +552,7 @@ export function ensureGisLayers(
 
 /** Layer ids belonging to each GIS overlay, for visibility toggling. */
 export const GIS_LAYER_IDS: Record<string, string[]> = {
-  state: [LYR.gisStateLine],
+  state: [LYR.gisStateGlow, LYR.gisStateLine],
   districts: [LYR.gisDistrictFill, LYR.gisDistrictLine],
   highways: [LYR.gisHighwayGlow, LYR.gisHighwayLine, LYR.gisHighwayLabel],
   roads: [LYR.gisRoadLine],

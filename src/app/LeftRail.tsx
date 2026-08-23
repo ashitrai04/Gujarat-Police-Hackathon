@@ -19,8 +19,8 @@ import type { GisLayer } from '@/app/store';
  * reads as a key rather than a list of checkboxes.
  */
 const GIS_META: { key: GisLayer; label: string; colour: string; shape: 'line' | 'area' }[] = [
-  { key: 'state', label: 'State boundary', colour: '#FDE047', shape: 'line' },
-  { key: 'districts', label: 'Districts', colour: '#A855F7', shape: 'area' },
+  { key: 'state', label: 'State boundary', colour: '#FF1744', shape: 'line' },
+  { key: 'districts', label: 'Districts', colour: '#FF4FD8', shape: 'area' },
   { key: 'highways', label: 'National highways', colour: '#FB923C', shape: 'line' },
   { key: 'roads', label: 'Major roads', colour: '#22D3EE', shape: 'line' },
 ];
