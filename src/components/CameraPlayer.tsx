@@ -4,7 +4,10 @@ import { StatusDot } from './ui';
 import { STREAM_BASE, fetchCameraState } from '@/api/registry';
 import type { Camera } from '@/api/types';
 
-type Phase = 'connecting' | 'live' | 'replay' | 'error';
+type Phase = 'connecting' | 'live' | 'replay' | 'error' | 'waiting';
+
+/** Backoff between reconnect attempts, in ms. Caps so a dead feed stays cheap. */
+const RETRY_MS = [6000, 12000, 25000, 45000, 60000];
 
 interface CameraState {
   stream_url: string;
@@ -33,6 +36,7 @@ export function CameraPlayer({
   showHeader = true,
   startDelayMs = 0,
   preferProgressive = false,
+  route,
 }: {
   camera: Camera;
   className?: string;
@@ -40,10 +44,17 @@ export function CameraPlayer({
   startDelayMs?: number;
   /** Skip live HLS entirely — useful when many tiles share the host. */
   preferProgressive?: boolean;
+  /**
+   * Which route the health probe found working. `null` means neither did, so
+   * the tile waits instead of hammering a feed that is down; when the probe
+   * later reports a route, this prop changes and playback starts by itself.
+   */
+  route?: 'progressive' | 'hls' | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [phase, setPhase] = useState<Phase>('connecting');
   const [msg, setMsg] = useState('');
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -53,15 +64,32 @@ export function CameraPlayer({
       setMsg('No signal');
       return;
     }
+    // Probe says nothing is serving. Sit quiet — `route` flipping to a real
+    // value re-runs this effect and the tile recovers on its own.
+    if (route === null) {
+      setPhase('waiting');
+      setMsg('Waiting for stream');
+      return;
+    }
 
     let hls: Hls | null = null;
     let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     setPhase('connecting');
     setMsg('');
 
     const destroyHls = () => {
       hls?.destroy();
       hls = null;
+    };
+
+    /** Show the failure, then try again on a widening backoff. */
+    const fail = (message: string) => {
+      if (cancelled) return;
+      setPhase('error');
+      setMsg(message);
+      const wait = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)];
+      retry = setTimeout(() => !cancelled && setAttempt((n) => n + 1), wait);
     };
 
     /* ── 3. Progressive MP4, seeked to the live position ── */
@@ -101,10 +129,7 @@ export function CameraPlayer({
         el.play().catch(() => {});
       };
       el.addEventListener('loadedmetadata', seek, { once: true });
-      el.onerror = () => {
-        setPhase('error');
-        setMsg('Stream unavailable');
-      };
+      el.onerror = () => fail('Stream unavailable');
       el.load();
       setPhase('replay');
     };
@@ -142,7 +167,11 @@ export function CameraPlayer({
     const begin = () => {
       if (cancelled) return;
       const liveUrl = camera.streamUrl;
-      if (!preferProgressive && liveUrl.includes('.m3u8') && Hls.isSupported()) {
+      // A probed route beats guessing: live-only cameras have no stored file to
+      // fall back to, and cameras with one play far more reliably from it.
+      if (route === 'progressive') {
+        void startProgressive();
+      } else if (!preferProgressive && liveUrl.includes('.m3u8') && Hls.isSupported()) {
         startHls(liveUrl, true);
       } else {
         void startProgressive();
@@ -160,15 +189,16 @@ export function CameraPlayer({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      if (retry) clearTimeout(retry);
       v.removeEventListener('playing', onPlaying);
       v.removeEventListener('canplay', onCanPlay);
       destroyHls();
       v.removeAttribute('src');
       v.load();
     };
-  }, [camera.id, camera.streamUrl, camera.status, startDelayMs, preferProgressive]);
+  }, [camera.id, camera.streamUrl, camera.status, startDelayMs, preferProgressive, route, attempt]);
 
-  const showOverlay = phase === 'connecting' || phase === 'error';
+  const showOverlay = phase === 'connecting' || phase === 'error' || phase === 'waiting';
 
   return (
     <div
@@ -186,7 +216,7 @@ export function CameraPlayer({
 
       {showOverlay && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5">
-          {phase === 'connecting' && (
+          {(phase === 'connecting' || phase === 'waiting') && (
             <span
               className="h-4 w-4 animate-spin rounded-full border-2 border-transparent"
               style={{ borderTopColor: 'var(--signal)', borderRightColor: 'var(--signal)' }}
@@ -195,6 +225,11 @@ export function CameraPlayer({
           <span className="text-[10.5px]" style={{ color: 'var(--text-mute)' }}>
             {phase === 'connecting' ? 'Connecting…' : msg || 'No signal'}
           </span>
+          {phase === 'error' && (
+            <span className="text-[9.5px]" style={{ color: 'var(--text-mute)' }}>
+              retrying…
+            </span>
+          )}
         </div>
       )}
 

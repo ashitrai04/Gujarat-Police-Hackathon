@@ -8,6 +8,8 @@ import { api } from '@/api/client';
 import { useStore } from '@/app/store';
 import { Button, Empty, Pill } from '@/components/ui';
 import { CameraPlayer } from '@/components/CameraPlayer';
+import { useStreamHealth } from '@/api/useStreamHealth';
+import { byAvailability } from '@/api/health';
 import type { Camera } from '@/api/types';
 
 const LAYOUTS = [
@@ -66,12 +68,17 @@ export function VideoWall() {
     return () => ro.disconnect();
   }, [dockOpen, wallFullscreen]);
 
+  const { data: health } = useStreamHealth();
+
+  // Cameras that are actually serving come first, so page 1 of the wall is
+  // never a screen of dead tiles.
   const tiles = useMemo(
     () =>
       wallCameraIds
         .map((id) => cams?.find((c) => c.id === id))
-        .filter((c): c is Camera => !!c),
-    [wallCameraIds, cams],
+        .filter((c): c is Camera => !!c)
+        .sort(byAvailability(health)),
+    [wallCameraIds, cams, health],
   );
 
   /* ── Drag the top edge to resize ────────────────────────────── */
@@ -295,7 +302,7 @@ export function VideoWall() {
           {pageTiles.map((c, i) => (
             // Stagger starts: the host drops sessions when many HLS players
             // connect at once, which showed up as permanently black tiles.
-            <Tile key={c.id} camera={c} startDelayMs={i * 700} />
+            <Tile key={c.id} camera={c} startDelayMs={i * 700} route={health?.[c.id]?.route} />
           ))}
           {Array.from({ length: emptySlots }, (_, i) => (
             <EmptySlot key={`slot-${i}`} onAdd={() => setPickerOpen(true)} />
@@ -324,10 +331,12 @@ function Tile({
   camera,
   startDelayMs = 0,
   preferProgressive = false,
+  route,
 }: {
   camera: Camera;
   startDelayMs?: number;
   preferProgressive?: boolean;
+  route?: 'progressive' | 'hls' | null;
 }) {
   const removeFromWall = useStore((s) => s.removeFromWall);
   const selectCamera = useStore((s) => s.selectCamera);
@@ -350,6 +359,7 @@ function Tile({
         className="h-full w-full"
         startDelayMs={startDelayMs}
         preferProgressive={preferProgressive}
+        route={route}
       />
 
       {camera.anprCapable && (

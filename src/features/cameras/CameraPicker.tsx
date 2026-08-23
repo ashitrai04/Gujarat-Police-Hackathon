@@ -5,6 +5,8 @@ import { Check, MonitorPlay, Search, X } from 'lucide-react';
 import { api } from '@/api/client';
 import { useStore } from '@/app/store';
 import { Button, Empty, Pill, Spinner, StatusDot } from '@/components/ui';
+import { useStreamHealth } from '@/api/useStreamHealth';
+import { byAvailability } from '@/api/health';
 import { DOMAIN_COLOR, DOMAIN_LABEL, type Camera } from '@/api/types';
 
 const GRADE_COLOR: Record<Camera['anprGrade'], string> = {
@@ -36,6 +38,8 @@ export function CameraPicker({ onClose }: { onClose: () => void }) {
     [cams],
   );
 
+  const { data: health } = useStreamHealth();
+
   const list = useMemo(() => {
     let out = cams ?? [];
     if (district) out = out.filter((c) => c.district === district);
@@ -45,8 +49,10 @@ export function CameraPicker({ onClose }: { onClose: () => void }) {
         [c.name, c.district, c.id, ...c.tags].join(' ').toLowerCase().includes(n),
       );
     }
-    return out;
-  }, [cams, q, district]);
+    // Streaming cameras first — the host reports every camera as "live",
+    // including ones whose stream is dead, so only the probe can order these.
+    return [...out].sort(byAvailability(health));
+  }, [cams, q, district, health]);
 
   const selected = new Set(wall);
 
@@ -172,6 +178,23 @@ export function CameraPicker({ onClose }: { onClose: () => void }) {
                           <Pill colour={GRADE_COLOR[c.anprGrade]}>
                             {c.anprGrade === 'unknown' ? 'ANPR ?' : `ANPR ${c.anprGrade}`}
                           </Pill>
+                          {health?.[c.id] && (
+                            <Pill
+                              colour={
+                                health[c.id].state === 'available'
+                                  ? 'var(--signal)'
+                                  : health[c.id].state === 'live-only'
+                                    ? 'var(--alert)'
+                                    : 'var(--critical)'
+                              }
+                            >
+                              {health[c.id].state === 'available'
+                                ? 'Streaming'
+                                : health[c.id].state === 'live-only'
+                                  ? 'Live only'
+                                  : 'No stream'}
+                            </Pill>
+                          )}
                         </span>
                       </span>
                     </button>

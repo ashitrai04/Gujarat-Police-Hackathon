@@ -3,10 +3,10 @@
   "rewrites": [
     {
       "source": "/sentinel/:path*",
-      "destination": "https://live.corp8.cloud/:path*"
+      "destination": "/api/sentinel/:path*"
     },
     {
-      "source": "/((?!sentinel/).*)",
+      "source": "/((?!api/|sentinel/).*)",
       "destination": "/index.html"
     }
   ]
