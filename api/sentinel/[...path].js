@@ -1,6 +1,14 @@
 export const config = { runtime: 'edge' };
 
-const UPSTREAM = 'https://live.corp8.cloud';
+/**
+ * The estate answers on two names. `live.sentinelgujarat.in` is not a second
+ * backend — it 301s to `live.corp8.cloud` for every path (verified on
+ * /api/cameras, /camera/N and /stream/N) — but the organisers have already
+ * moved the canonical name once, so the alias is kept as a fallback rather
+ * than hard-coding a single host.
+ */
+const HOSTS = ['https://live.corp8.cloud', 'https://live.sentinelgujarat.in'];
+const UPSTREAM = HOSTS[0];
 
 /**
  * Same-origin proxy for the feed host.
@@ -36,9 +44,9 @@ const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 /** Collect `Set-Cookie` into a single `name=value; …` request header. */
-function jar(res: Response, existing = ''): string {
+function jar(res, existing = '') {
   const raw = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
-  const pairs = new Map<string, string>();
+  const pairs = new Map();
   for (const part of existing.split(';')) {
     const [k, ...v] = part.trim().split('=');
     if (k) pairs.set(k, v.join('='));
@@ -50,7 +58,7 @@ function jar(res: Response, existing = ''): string {
   return [...pairs].map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
-export default async function handler(req: Request): Promise<Response> {
+export default async function handler(req) {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/api\/sentinel/, '').replace(/^\/sentinel/, '');
   let target = UPSTREAM + path + url.search;
@@ -68,11 +76,23 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response(null, { status: 204, headers: cors(new Headers()) });
   }
 
-  let res: Response;
-  try {
-    res = await fetch(target, { method: req.method, headers: out, redirect: 'manual' });
-  } catch (err) {
-    return new Response(`Upstream unreachable: ${(err as Error).message}`, { status: 502 });
+  let res = null;
+  let lastErr = '';
+  for (const host of HOSTS) {
+    try {
+      res = await fetch(host + path + url.search, {
+        method: req.method,
+        headers: out,
+        redirect: 'manual',
+      });
+      target = host + path + url.search;
+      break;
+    } catch (err) {
+      lastErr = err.message;
+    }
+  }
+  if (!res) {
+    return new Response('Upstream unreachable: ' + lastErr, { status: 502 });
   }
 
   // Resolve the cookieCheck handshake here rather than sending the browser
@@ -83,7 +103,9 @@ export default async function handler(req: Request): Promise<Response> {
     if (!loc) break;
     cookies = jar(res, cookies);
     target = new URL(loc, target).toString();
-    if (!target.startsWith(UPSTREAM)) break;
+    // Following the alias's 301 back to the canonical host is expected and
+    // must stay inside the proxy; anything else is off-estate.
+    if (!HOSTS.some((h) => target.startsWith(h))) break;
     if (cookies) out.set('cookie', cookies);
     res = await fetch(target, { method: req.method, headers: out, redirect: 'manual' });
     hops += 1;
@@ -115,7 +137,7 @@ export default async function handler(req: Request): Promise<Response> {
   return new Response(res.body, { status: res.status, headers: cors(headers) });
 }
 
-function cors(h: Headers): Headers {
+function cors(h) {
   h.set('access-control-allow-origin', '*');
   h.set('access-control-allow-headers', 'range, content-type');
   h.set('access-control-expose-headers', 'content-range, content-length, accept-ranges');

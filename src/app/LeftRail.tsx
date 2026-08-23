@@ -10,6 +10,7 @@ import { ALL_DOMAINS, useStore, type PoiLayer } from './store';
 import { useBreakpoint } from './useBreakpoint';
 import { DOMAIN_COLOR, DOMAIN_LABEL, type CameraStatus, type Domain } from '@/api/types';
 import { Button, Empty, SectionHeader, StatusDot, ToggleRow } from '@/components/ui';
+import { DOMAIN_MARKER_SRC } from '@/map/icons';
 
 const POI_META: Record<PoiLayer, { label: string; icon: typeof Hospital; colour: string }> = {
   hospital: { label: 'Hospitals', icon: Hospital, colour: '#F472B6' },
@@ -157,6 +158,14 @@ export function LeftRail() {
             colour={DOMAIN_COLOR[d]}
             label={DOMAIN_LABEL[d]}
             count={perDomain[d]}
+            icon={
+              <img
+                src={DOMAIN_MARKER_SRC[d]}
+                alt=""
+                aria-hidden
+                className="h-[18px] w-[18px] shrink-0 object-contain"
+              />
+            }
           />
         ))}
       </div>

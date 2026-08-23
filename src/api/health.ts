@@ -19,7 +19,11 @@ export interface StreamHealth {
   checkedAt: number;
 }
 
-const TIMEOUT_MS = 8000;
+const TIMEOUT_MS = 15000;
+/** Gap between probes on one worker. The host 5xx's a burst of requests. */
+const PACE_MS = 220;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function head(url: string, headers?: HeadersInit): Promise<Response | null> {
   const ctl = new AbortController();
@@ -47,17 +51,26 @@ async function head(url: string, headers?: HeadersInit): Promise<Response | null
 export async function probeCamera(cam: Camera): Promise<StreamHealth> {
   const checkedAt = Date.now();
 
-  const prog = await head(`${STREAM_BASE}/stream/${cam.id}`, { Range: 'bytes=0-1' });
-  if (prog?.status === 206) {
-    return { state: 'available', route: 'progressive', checkedAt };
-  }
-
-  const hls = await head(`${STREAM_BASE}/live/stream/${cam.id}/index.m3u8`);
-  if (hls?.ok) {
-    const body = await hls.text().catch(() => '');
-    if (body.startsWith('#EXTM3U')) {
-      return { state: 'live-only', route: 'hls', checkedAt };
+  // Two passes. A single miss is not proof a camera is down: this host sits
+  // behind Cloudflare and answers 5xx to bursts, which once had a whole run
+  // reporting 21 healthy cameras as broken. Only a repeated miss counts.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const prog = await head(`${STREAM_BASE}/stream/${cam.id}`, { Range: 'bytes=0-1' });
+    if (prog?.status === 206) {
+      return { state: 'available', route: 'progressive', checkedAt };
     }
+
+    const hls = await head(`${STREAM_BASE}/live/stream/${cam.id}/index.m3u8`);
+    if (hls?.ok) {
+      const body = await hls.text().catch(() => '');
+      if (body.startsWith('#EXTM3U')) {
+        return { state: 'live-only', route: 'hls', checkedAt };
+      }
+    }
+    // A definite 500 "muxer instance not available" needs no second look;
+    // a network error or timeout does.
+    if (hls && hls.status !== 500 && prog) break;
+    if (attempt === 0) await sleep(800);
   }
 
   return { state: 'unavailable', route: null, checkedAt };
@@ -66,7 +79,7 @@ export async function probeCamera(cam: Camera): Promise<StreamHealth> {
 /** Probe the estate a few at a time — the host throttles request bursts. */
 export async function probeAll(
   cams: Camera[],
-  concurrency = 4,
+  concurrency = 3,
 ): Promise<Record<string, StreamHealth>> {
   const out: Record<string, StreamHealth> = {};
   let cursor = 0;
@@ -75,6 +88,7 @@ export async function probeAll(
     while (cursor < cams.length) {
       const cam = cams[cursor++];
       out[cam.id] = await probeCamera(cam);
+      await sleep(PACE_MS);
     }
   }
 

@@ -1,24 +1,25 @@
 /**
- * Per-domain map icons from Maki (Mapbox's open-source set, CC0).
+ * Per-domain map markers.
  *
- * Distinct glyphs read far faster than same-shaped dots in different colours —
+ * These are supplied pin artwork — a teardrop with the department's glyph
+ * inside — rather than a glyph on a generated disc. Because the artwork is
+ * already pin-shaped, the symbol layer anchors it at the bottom so the point
+ * of the pin sits on the camera's coordinate instead of the image centre.
+ *
+ * Distinct shapes read far faster than same-shaped dots in different colours:
  * an operator can tell a traffic camera from a hospital one at a glance, even
- * on satellite imagery where hue contrast is poor.
- *
- * Loaded from the installed package at build time and registered with the map
- * as tinted images, so they survive a base-style switch like any other layer.
+ * over satellite imagery where hue contrast is poor.
  */
 
 import type * as mapboxgl from 'mapbox-gl';
 import type { Domain } from '@/api/types';
-import { DOMAIN_COLOR } from '@/api/types';
 
-// Vite inlines these as raw SVG strings.
-import trafficSvg from '@mapbox/maki/icons/roadblock.svg?raw';
-import hospitalSvg from '@mapbox/maki/icons/hospital.svg?raw';
-import pdsSvg from '@mapbox/maki/icons/warehouse.svg?raw';
-import rtoSvg from '@mapbox/maki/icons/car.svg?raw';
-import publicSvg from '@mapbox/maki/icons/police.svg?raw';
+// Vite resolves these to hashed URLs at build time.
+import trafficPng from '@/assets/markers/traffic-lights.png';
+import hospitalPng from '@/assets/markers/hospital.png';
+import pdsPng from '@/assets/markers/PDS.png';
+import rtoPng from '@/assets/markers/rto.png';
+import publicPng from '@/assets/markers/safety.png';
 
 export const DOMAIN_ICON: Record<Domain, string> = {
   traffic: 'sent-traffic',
@@ -28,73 +29,68 @@ export const DOMAIN_ICON: Record<Domain, string> = {
   public: 'sent-public',
 };
 
-const SVG: Record<Domain, string> = {
-  traffic: trafficSvg,
-  hospital: hospitalSvg,
-  pds: pdsSvg,
-  rto: rtoSvg,
-  public: publicSvg,
+/**
+ * The same artwork the map uses, exported so the legend can show the exact
+ * pin an operator will be looking for rather than an approximation of it.
+ */
+export const DOMAIN_MARKER_SRC: Record<Domain, string> = {
+  traffic: trafficPng,
+  hospital: hospitalPng,
+  pds: pdsPng,
+  rto: rtoPng,
+  public: publicPng,
 };
 
-const SIZE = 48; // rendered at 3x for crisp retina pins
+const SRC = DOMAIN_MARKER_SRC;
 
-/** Draw one Maki glyph on a dark disc so it stays legible over satellite. */
-function render(svg: string, colour: string): Promise<HTMLCanvasElement> {
-  // Maki ships monochrome paths; recolour via a fill on the root <svg>.
-  const tinted = svg
-    .replace('<svg', `<svg fill="${colour}"`)
-    .replace(/width="\d+"/, `width="${SIZE}"`)
-    .replace(/height="\d+"/, `height="${SIZE}"`);
+/**
+ * Artwork is 512px square. Registering it at that size would burn texture
+ * memory for no gain, so it is drawn down to 128px and registered at
+ * pixelRatio 2 — a 64px logical marker that still has retina detail.
+ */
+const TEX = 128;
+const PIXEL_RATIO = 2;
 
-  const blob = new Blob([tinted], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-
+function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => {
-      const c = document.createElement('canvas');
-      c.width = SIZE;
-      c.height = SIZE;
-      const ctx = c.getContext('2d')!;
-
-      // Disc backing + coloured ring, then the glyph on top.
-      const r = SIZE / 2;
-      ctx.beginPath();
-      ctx.arc(r, r, r - 3, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(11,18,32,0.92)';
-      ctx.fill();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = colour;
-      ctx.stroke();
-
-      const inset = SIZE * 0.26;
-      ctx.drawImage(img, inset, inset, SIZE - inset * 2, SIZE - inset * 2);
-
-      URL.revokeObjectURL(url);
-      resolve(c);
-    };
-    img.onerror = (e) => {
-      URL.revokeObjectURL(url);
-      reject(e);
-    };
+    img.decoding = 'async';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
     img.src = url;
   });
 }
 
-/** Register every domain icon. Safe to call again after a style change. */
+async function render(url: string): Promise<ImageData> {
+  const img = await loadImage(url);
+  const c = document.createElement('canvas');
+  c.width = TEX;
+  c.height = TEX;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+
+  // A soft drop shadow keeps the pin readable against bright satellite tiles.
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
+  ctx.drawImage(img, 4, 2, TEX - 8, TEX - 8);
+
+  return ctx.getImageData(0, 0, TEX, TEX);
+}
+
+/** Register every domain marker. Safe to call again after a style change. */
 export async function ensureDomainIcons(map: mapboxgl.Map): Promise<void> {
   await Promise.all(
-    (Object.keys(SVG) as Domain[]).map(async (domain) => {
+    (Object.keys(SRC) as Domain[]).map(async (domain) => {
       const id = DOMAIN_ICON[domain];
       if (map.hasImage(id)) return;
       try {
-        const canvas = await render(SVG[domain], DOMAIN_COLOR[domain]);
+        const data = await render(SRC[domain]);
+        // The style may have swapped while the PNG was decoding.
         if (map.hasImage(id)) return;
-        map.addImage(id, canvas.getContext('2d')!.getImageData(0, 0, SIZE, SIZE), {
-          pixelRatio: 3,
-        });
+        map.addImage(id, data, { pixelRatio: PIXEL_RATIO });
       } catch {
-        /* a missing glyph must not stop the rest of the map loading */
+        /* a missing marker must not stop the rest of the map loading */
       }
     }),
   );

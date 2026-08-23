@@ -116,26 +116,28 @@ export function ensureCameraLayers(map: mapboxgl.Map, data: GeoJSONFeatureCollec
   }
 
   if (!map.getLayer(LYR.pointRing)) {
-    // Outer ring = status. Inner dot = domain. Two facts, one pin.
+    // The pin artwork carries the department; this dot sits at the pin's tip
+    // and carries status. A ring would read as detached now that the symbol is
+    // bottom-anchored — the coordinate is under the pin, not behind it.
     map.addLayer({
       id: LYR.pointRing,
       type: 'circle',
       source: SRC.cameras,
       filter: ['!', ['has', 'point_count']],
       paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 9, 12, 13],
-        'circle-color': 'rgba(11,18,32,0)',
-        'circle-stroke-width': 2.5,
-        'circle-stroke-color': [
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 3, 12, 4.5],
+        'circle-color': [
           'match', ['get', 'status'],
           'online', '#22C55E',
           'degraded', '#F5A524',
           'offline', '#EF4444',
           '#64748B',
         ],
+        'circle-stroke-width': 1.5,
+        'circle-stroke-color': 'rgba(6,11,20,0.85)',
       },
     });
-    // Distinct Maki glyph per department — far quicker to read than
+    // Distinct pin artwork per department — far quicker to read than
     // identically-shaped dots in different colours.
     map.addLayer({
       id: LYR.point,
@@ -152,7 +154,10 @@ export function ensureCameraLayers(map: mapboxgl.Map, data: GeoJSONFeatureCollec
           'public', DOMAIN_ICON.public,
           DOMAIN_ICON.public,
         ],
-        'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.62, 12, 0.95],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.42, 12, 0.72],
+        // The artwork is a teardrop, so the tip — not the centre — is the
+        // camera's actual position.
+        'icon-anchor': 'bottom',
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },
