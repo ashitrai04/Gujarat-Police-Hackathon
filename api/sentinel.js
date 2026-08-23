@@ -50,9 +50,16 @@ const STRIP = new Set([
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+/** Every `Set-Cookie` line on a response, across runtimes that differ here. */
+function setCookiesOf(res) {
+  if (typeof res.headers.getSetCookie === 'function') return res.headers.getSetCookie();
+  const one = res.headers.get('set-cookie');
+  return one ? [one] : [];
+}
+
 /** Collect `Set-Cookie` into a single `name=value; …` request header. */
 function jar(res, existing = '') {
-  const raw = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  const raw = setCookiesOf(res);
   const pairs = new Map();
   for (const part of existing.split(';')) {
     const [k, ...v] = part.trim().split('=');
@@ -90,6 +97,8 @@ export default async function handler(req) {
     return new Response(null, { status: 204, headers: cors(new Headers()) });
   }
 
+  /** Set-Cookie lines gathered across the whole redirect chain. */
+  const handshake = [];
   let res = null;
   let lastErr = '';
   for (const host of HOSTS) {
@@ -115,7 +124,12 @@ export default async function handler(req) {
   while (res.status >= 300 && res.status < 400 && hops < 4) {
     const loc = res.headers.get('location');
     if (!loc) break;
+    // The handshake spans two responses: the 302 sets `cookieCheck`, the 200 it
+    // points at sets `hlsSession`. Both must reach the browser — relaying only
+    // the final response's cookies leaves the variant playlist 401ing, which is
+    // what put every HLS tile on a black screen.
     cookies = jar(res, cookies);
+    handshake.push(...setCookiesOf(res));
     target = new URL(loc, target).toString();
     // Following the alias's 301 back to the canonical host is expected and
     // must stay inside the proxy; anything else is off-estate.
@@ -136,9 +150,7 @@ export default async function handler(req) {
   // Re-issue the session cookie as first-party so the browser sends it back on
   // segment requests. `Partitioned`/`SameSite=None` only apply to third-party
   // contexts and would be dropped over this same-origin hop.
-  const setCookies =
-    typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
-  for (const line of setCookies) {
+  for (const line of [...handshake, ...setCookiesOf(res)]) {
     headers.append(
       'set-cookie',
       line
