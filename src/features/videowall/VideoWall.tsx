@@ -330,13 +330,11 @@ function EmptySlot({ onAdd }: { onAdd: () => void }) {
 function Tile({
   camera,
   startDelayMs = 0,
-  preferProgressive = false,
   route,
 }: {
   camera: Camera;
   startDelayMs?: number;
-  preferProgressive?: boolean;
-  route?: 'progressive' | 'hls' | null;
+  route?: 'hls' | null;
 }) {
   const removeFromWall = useStore((s) => s.removeFromWall);
   const selectCamera = useStore((s) => s.selectCamera);
@@ -358,7 +356,6 @@ function Tile({
         camera={camera}
         className="h-full w-full"
         startDelayMs={startDelayMs}
-        preferProgressive={preferProgressive}
         route={route}
       />
 

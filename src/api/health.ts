@@ -10,12 +10,12 @@ import type { Camera } from './types';
  * muxer, and some answer 500 `muxer instance not available` on both — which is
  * what produces "Stream unavailable" tiles. Only a probe tells them apart.
  */
-export type StreamState = 'available' | 'live-only' | 'unavailable';
+export type StreamState = 'available' | 'unavailable';
 
 export interface StreamHealth {
   state: StreamState;
-  /** Which route works, so the player can go straight to it. */
-  route: 'progressive' | 'hls' | null;
+  /** Which route works, so the player can go straight to it. HLS only now. */
+  route: 'hls' | null;
   checkedAt: number;
 }
 
@@ -49,39 +49,31 @@ async function head(url: string, headers?: HeadersInit): Promise<Response | null
 }
 
 /**
- * Only a **206** counts as a working stored file. Measured across all 30
- * cameras, the endpoint answers 206 with a real `Content-Range` total when the
- * file exists (22 cameras) and a bare 200 with no length when it does not
- * (8 cameras) — a 200 here is an empty transcode that never yields a frame, so
- * treating it as success is exactly what puts a permanently black tile on the
- * wall. The split matches the recording run one-for-one.
+ * Ask for the camera's HLS manifest and see whether one comes back.
  *
- * The HLS manifest is then checked to catch the live-only cameras, which have
- * no stored file but do have a running muxer.
+ * This used to distinguish a stored progressive file from a live-only muxer by
+ * whether a byte-range request answered 206. Both of those are gone: the grid
+ * publishes HLS only, so there is exactly one thing to check and one way to
+ * fail. A manifest that starts `#EXTM3U` is a camera that will play.
  */
 export async function probeCamera(cam: Camera): Promise<StreamHealth> {
   const checkedAt = Date.now();
 
-  // Two passes. A single miss is not proof a camera is down: this host sits
-  // behind Cloudflare and answers 5xx to bursts, which once had a whole run
-  // reporting 21 healthy cameras as broken. Only a repeated miss counts.
+  // Two passes. A single miss is not proof a camera is down — this grid sits
+  // behind a CDN that answers 5xx to bursts, which once had a run report 21
+  // healthy cameras as broken. Only a repeated miss counts.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const prog = await head(`${STREAM_BASE}/stream/${cam.id}`, { Range: 'bytes=0-1' });
-    if (prog?.status === 206) {
-      return { state: 'available', route: 'progressive', checkedAt };
-    }
-
-    const hls = await head(`${STREAM_BASE}/live/stream/${cam.id}/index.m3u8`);
-    if (hls?.ok) {
-      const body = await hls.text().catch(() => '');
+    const res = await head(`${STREAM_BASE}/${cam.id}/index.m3u8`);
+    if (res?.ok) {
+      const body = await res.text().catch(() => '');
       if (body.startsWith('#EXTM3U')) {
-        return { state: 'live-only', route: 'hls', checkedAt };
+        return { state: 'available', route: 'hls', checkedAt };
       }
     }
-    // Upstream's own 500 is a real answer — "muxer instance not available" —
-    // and needs no second look. A 502/503/429 or a timeout is the throttle
-    // talking, not the camera, so that is the only case worth retrying.
-    if (!transient(prog) && !transient(hls)) break;
+    // A 404 is the grid's own answer: that camera is not publishing. A
+    // 502/503/429 or a timeout is throttling, not the camera, and is the only
+    // case worth a second look.
+    if (!transient(res)) break;
     if (attempt === 0) await sleep(1500);
   }
 
@@ -108,15 +100,15 @@ export async function probeAll(
   return out;
 }
 
-const RANK: Record<StreamState, number> = { available: 0, 'live-only': 1, unavailable: 2 };
+const RANK: Record<StreamState, number> = { available: 0, unavailable: 1 };
 
-/** Playable cameras first, then live-only, then dead — stable within each tier. */
+/** Playable cameras first, then dead — stable within each tier. */
 export function byAvailability(health: Record<string, StreamHealth> | undefined) {
   return (a: Camera, b: Camera) => {
     const ra = RANK[health?.[a.id]?.state ?? 'available'];
     const rb = RANK[health?.[b.id]?.state ?? 'available'];
     if (ra !== rb) return ra - rb;
-    return Number(a.id) - Number(b.id);
+    return a.id.localeCompare(b.id, undefined, { numeric: true });
   };
 }
 

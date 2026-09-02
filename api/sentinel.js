@@ -1,166 +1,92 @@
 export const config = { runtime: 'edge' };
 
 /**
- * The estate answers on two names. `live.sentinelgujarat.in` is not a second
- * backend — it 301s to `live.corp8.cloud` for every path (verified on
- * /api/cameras, /camera/N and /stream/N) — but the organisers have already
- * moved the canonical name once, so the alias is kept as a fallback rather
- * than hard-coding a single host.
- */
-const HOSTS = ['https://live.corp8.cloud', 'https://live.sentinelgujarat.in'];
-const UPSTREAM = HOSTS[0];
-
-/**
- * Same-origin proxy for the feed host.
+ * Same-origin proxy for the Sentinel camera grid.
  *
- * A plain `vercel.json` rewrite cannot do this job. Three upstream behaviours
- * break it, and all three are fatal to video playback:
+ * The grid moved to cctv.corp8.cloud and is now behind an access key. The key
+ * lives ONLY here, in SENTINEL_ACCESS_KEY — the browser never sees it. This
+ * function signs in once, keeps the `sentinel` session cookie in module scope,
+ * and attaches it to every upstream request.
  *
- * 1. **Range requests are not forwarded.** The rewrite answered every request
- *    with `Content-Range: bytes 0-1` and a 2-byte body no matter what the
- *    browser asked for. The progressive files here are ~22 GB, so a `<video>`
- *    element that cannot range-request gets two bytes, fires `error`, and the
- *    tile reads "Stream unavailable" — on every camera.
- * 2. **The HLS playlist 302s to an absolute upstream URL** carrying
- *    `?cookieCheck=1`. Following it takes the browser cross-origin, where the
- *    response arrives with `Access-Control-Allow-Origin: *` **twice** and is
- *    rejected. The redirect has to be resolved server-side.
- * 3. **The session rides on `Secure; SameSite=None; Partitioned` cookies.**
- *    Without them the variant playlist answers 401 and every tile is black.
+ * What the upstream serves now:
+ *   GET /cameras.json          catalogue — a flat array of { id, name }
+ *   GET /<id>/index.m3u8       HLS, AES-128 encrypted, VOD, ~4300 x 10s segs
+ *   GET /enc.key               the 16-byte AES key
+ *   GET /<id>/segNNNNN.ts      media segments
  *
- * So: forward the range, resolve the redirect here, keep the cookie jar for
- * the length of the handshake, and hand the browser one clean CORS header.
+ * Two rewrites are required for playback to work at all:
  *
- * Routing note: this is a single function, not `sentinel/[...path].js`. The
- * bracket catch-all is a Next.js filename convention — on a plain Vite project
- * it deployed without error and then 404'd every request, while /api/ping in
- * the same deployment answered fine. `vercel.json` therefore rewrites
- * `/sentinel/:path*` to `/api/sentinel?__p=:path*` and the path is read back
- * out of the query here.
+ * 1. The playlist declares its key as URI="/enc.key" — an absolute path. In
+ *    the browser that resolves against OUR origin, not the upstream, so hls.js
+ *    would fetch https://thisapp/enc.key and get the SPA's index.html instead
+ *    of a key. Every m3u8 body is rewritten to point at the proxied path.
+ * 2. Range headers must be forwarded. A rewrite that drops them returns two
+ *    bytes and the <video> element fires `error` — the bug that had every tile
+ *    reading "Stream unavailable" before.
+ *
+ * RTSP (:8554) and WHEP (:8889) are deliberately not proxied. They are TCP/UDP
+ * media on a bare IP that a CDN cannot carry, and WHEP is plain HTTP — an
+ * HTTPS page cannot load it without a mixed-content block. Browser playback
+ * uses HLS; RTSP is for the inference pipeline, off the web tier.
  */
 
-/** Headers that must not be relayed upstream — Cloudflare bot-challenges them. */
+const UPSTREAM = 'https://cctv.corp8.cloud';
+const ACCESS_KEY = process.env.SENTINEL_ACCESS_KEY || '';
+const PREFIX = '/sentinel';
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/** Headers never relayed upstream — they trip the edge or leak our origin. */
 const STRIP = new Set([
-  'host', 'origin', 'referer', 'cookie',
+  'host', 'origin', 'referer', 'cookie', 'connection',
   'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-user',
   'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-vercel-id',
   'x-real-ip', 'forwarded',
 ]);
 
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+/* The session is a year-long cookie, so one sign-in serves many requests.
+   Cached per isolate; a cold start simply signs in again. */
+let session = null;
+let signingIn = null;
 
-/** Every `Set-Cookie` line on a response, across runtimes that differ here. */
-function setCookiesOf(res) {
-  if (typeof res.headers.getSetCookie === 'function') return res.headers.getSetCookie();
-  const one = res.headers.get('set-cookie');
-  return one ? [one] : [];
-}
-
-/** Collect `Set-Cookie` into a single `name=value; …` request header. */
-function jar(res, existing = '') {
-  const raw = setCookiesOf(res);
-  const pairs = new Map();
-  for (const part of existing.split(';')) {
-    const [k, ...v] = part.trim().split('=');
-    if (k) pairs.set(k, v.join('='));
-  }
-  for (const line of raw) {
-    const [k, ...v] = line.split(';')[0].split('=');
-    if (k) pairs.set(k.trim(), v.join('='));
-  }
-  return [...pairs].map(([k, v]) => `${k}=${v}`).join('; ');
-}
-
-export default async function handler(req) {
-  const url = new URL(req.url);
-
-  // The rewrite parks the real path in `__p`; everything else in the query
-  // belongs to the upstream request (e.g. ?cookieCheck=1).
-  const params = new URLSearchParams(url.search);
-  const routed = params.get('__p');
-  params.delete('__p');
-  const path = '/' + (routed ?? url.pathname.replace(/^\/api\/sentinel\/?/, '')).replace(/^\/+/, '');
-  const query = params.toString() ? '?' + params.toString() : '';
-  let target = UPSTREAM + path + query;
-
-  const out = new Headers();
-  req.headers.forEach((value, key) => {
-    if (!STRIP.has(key.toLowerCase())) out.set(key, value);
+async function signIn() {
+  if (!ACCESS_KEY) throw new Error('SENTINEL_ACCESS_KEY is not set');
+  const res = await fetch(`${UPSTREAM}/auth/login`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      'user-agent': UA,
+    },
+    body: new URLSearchParams({ password: ACCESS_KEY }).toString(),
+    redirect: 'manual',
   });
-  out.set('user-agent', UA);
-  // The browser's own cookies for this origin carry the upstream session.
-  let cookies = req.headers.get('cookie') ?? '';
-  if (cookies) out.set('cookie', cookies);
 
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: cors(new Headers()) });
+  const lines =
+    typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : [res.headers.get('set-cookie')].filter(Boolean);
+  for (const line of lines) {
+    const m = /(?:^|;\s*)sentinel=([^;]+)/.exec(line || '');
+    if (m) return `sentinel=${m[1]}`;
   }
+  // A wrong key re-renders the login form with 200 rather than erroring.
+  throw new Error(`sign-in failed (${res.status}) — check SENTINEL_ACCESS_KEY`);
+}
 
-  /** Set-Cookie lines gathered across the whole redirect chain. */
-  const handshake = [];
-  let res = null;
-  let lastErr = '';
-  for (const host of HOSTS) {
-    try {
-      res = await fetch(host + path + query, {
-        method: req.method,
-        headers: out,
-        redirect: 'manual',
+async function cookie(force = false) {
+  if (session && !force) return session;
+  if (!signingIn) {
+    signingIn = signIn()
+      .then((c) => {
+        session = c;
+        return c;
+      })
+      .finally(() => {
+        signingIn = null;
       });
-      target = host + path + query;
-      break;
-    } catch (err) {
-      lastErr = err.message;
-    }
   }
-  if (!res) {
-    return new Response('Upstream unreachable: ' + lastErr, { status: 502 });
-  }
-
-  // Resolve the cookieCheck handshake here rather than sending the browser
-  // cross-origin, where the duplicated CORS header would kill it.
-  let hops = 0;
-  while (res.status >= 300 && res.status < 400 && hops < 4) {
-    const loc = res.headers.get('location');
-    if (!loc) break;
-    // The handshake spans two responses: the 302 sets `cookieCheck`, the 200 it
-    // points at sets `hlsSession`. Both must reach the browser — relaying only
-    // the final response's cookies leaves the variant playlist 401ing, which is
-    // what put every HLS tile on a black screen.
-    cookies = jar(res, cookies);
-    handshake.push(...setCookiesOf(res));
-    target = new URL(loc, target).toString();
-    // Following the alias's 301 back to the canonical host is expected and
-    // must stay inside the proxy; anything else is off-estate.
-    if (!HOSTS.some((h) => target.startsWith(h))) break;
-    if (cookies) out.set('cookie', cookies);
-    res = await fetch(target, { method: req.method, headers: out, redirect: 'manual' });
-    hops += 1;
-  }
-
-  const headers = new Headers();
-  res.headers.forEach((value, key) => {
-    const k = key.toLowerCase();
-    // Rebuilt below; and never relay upstream's duplicated CORS header.
-    if (k === 'set-cookie' || k === 'access-control-allow-origin' || k === 'content-encoding') return;
-    headers.set(key, value);
-  });
-
-  // Re-issue the session cookie as first-party so the browser sends it back on
-  // segment requests. `Partitioned`/`SameSite=None` only apply to third-party
-  // contexts and would be dropped over this same-origin hop.
-  for (const line of [...handshake, ...setCookiesOf(res)]) {
-    headers.append(
-      'set-cookie',
-      line
-        .replace(/;\s*Partitioned/gi, '')
-        .replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
-        .replace(/;\s*Secure/gi, '; Secure'),
-    );
-  }
-
-  return new Response(res.body, { status: res.status, headers: cors(headers) });
+  return signingIn;
 }
 
 function cors(h) {
@@ -169,4 +95,75 @@ function cors(h) {
   h.set('access-control-expose-headers', 'content-range, content-length, accept-ranges');
   h.set('access-control-allow-methods', 'GET, HEAD, OPTIONS');
   return h;
+}
+
+export default async function handler(req) {
+  const url = new URL(req.url);
+  const params = new URLSearchParams(url.search);
+  const routed = params.get('__p');
+  params.delete('__p');
+  const path =
+    '/' + (routed ?? url.pathname.replace(/^\/api\/sentinel\/?/, '')).replace(/^\/+/, '');
+  const query = params.toString() ? `?${params.toString()}` : '';
+
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: cors(new Headers()) });
+  }
+
+  const base = new Headers();
+  req.headers.forEach((v, k) => {
+    if (!STRIP.has(k.toLowerCase())) base.set(k, v);
+  });
+  base.set('user-agent', UA);
+
+  const fetchUpstream = async (jar) => {
+    const h = new Headers(base);
+    h.set('cookie', jar);
+    return fetch(UPSTREAM + path + query, {
+      method: req.method,
+      headers: h,
+      redirect: 'manual',
+    });
+  };
+
+  let res;
+  try {
+    res = await fetchUpstream(await cookie());
+    // A redirect to /auth/ means the session lapsed — sign in again and retry
+    // once. Anything else is the upstream's own answer.
+    if (
+      res.status >= 300 && res.status < 400 &&
+      (res.headers.get('location') || '').includes('/auth/')
+    ) {
+      res = await fetchUpstream(await cookie(true));
+    }
+  } catch (err) {
+    return new Response(`Upstream unreachable: ${err.message}`, {
+      status: 502,
+      headers: cors(new Headers()),
+    });
+  }
+
+  const headers = new Headers();
+  res.headers.forEach((v, k) => {
+    const key = k.toLowerCase();
+    // Never relay the upstream session to the browser, and never relay a
+    // content-length that the playlist rewrite below would invalidate.
+    if (
+      key === 'set-cookie' || key === 'access-control-allow-origin' ||
+      key === 'content-encoding' || key === 'content-length'
+    ) return;
+    headers.set(k, v);
+  });
+
+  // Point the playlist's absolute key URI back through this proxy.
+  if (path.endsWith('.m3u8')) {
+    const body = (await res.text())
+      .replace(/URI="\/(?!\/)/g, `URI="${PREFIX}/`)
+      .replace(/^\/(?!\/)/gm, `${PREFIX}/`);
+    headers.set('content-type', 'application/vnd.apple.mpegurl');
+    return new Response(body, { status: res.status, headers: cors(headers) });
+  }
+
+  return new Response(res.body, { status: res.status, headers: cors(headers) });
 }

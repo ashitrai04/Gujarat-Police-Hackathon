@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { StatusDot } from './ui';
-import { STREAM_BASE, fetchCameraState } from '@/api/registry';
 import type { Camera } from '@/api/types';
 
 type Phase = 'connecting' | 'live' | 'replay' | 'error' | 'waiting';
@@ -9,47 +8,38 @@ type Phase = 'connecting' | 'live' | 'replay' | 'error' | 'waiting';
 /** Backoff between reconnect attempts, in ms. Caps so a dead feed stays cheap. */
 const RETRY_MS = [6000, 12000, 25000, 45000, 60000];
 
-interface CameraState {
-  stream_url: string;
-  hls_url: string | null;
-  hls_live_url: string | null;
-  slot_offset: number;
-  slot_seconds: number;
-  status: string;
-}
-
 /**
- * Mirrors the host's own player fallback chain, which matters because the live
- * HLS gateway caps concurrent sessions — with several tiles up, most get
- * refused and would otherwise sit on "Connecting…" forever.
+ * HLS is the only route a browser can take.
  *
- *   1. live HLS   (real-time, low latency, limited sessions)
- *   2. VOD HLS    (segmented file, when the live gateway is down)
- *   3. progressive MP4 seeked to slot_offset  (always available)
+ * The grid's other two endpoints are raw media on a bare public IP: RTSP on
+ * :8554 and WHEP on :8889. No CDN can proxy them, and WHEP is plain HTTP,
+ * which an HTTPS page will not load at all. They belong to the inference
+ * pipeline, not the dashboard. The progressive MP4 the old host offered is
+ * gone — there is no file to seek any more.
  *
- * Step 3 is the reliable one: the feeds are 12-hour loops and slot_offset says
- * where "now" is, so seeking there gives the same picture as live.
+ * Each playlist is a VOD manifest of roughly 4300 ten-second segments — about
+ * twelve hours on a loop — and hls.js would otherwise start at segment zero,
+ * which is the middle of the night. Playback is positioned at the current
+ * wall-clock offset inside that loop, so a tile opens on daylight and matches
+ * what the other tiles are showing.
  */
 export function CameraPlayer({
   camera,
   className = '',
   showHeader = true,
   startDelayMs = 0,
-  preferProgressive = false,
   route,
 }: {
   camera: Camera;
   className?: string;
   showHeader?: boolean;
   startDelayMs?: number;
-  /** Skip live HLS entirely — useful when many tiles share the host. */
-  preferProgressive?: boolean;
   /**
-   * Which route the health probe found working. `null` means neither did, so
-   * the tile waits instead of hammering a feed that is down; when the probe
-   * later reports a route, this prop changes and playback starts by itself.
+   * What the health probe found. `null` means the feed is not serving, so the
+   * tile waits rather than hammering it; when the probe later reports a route,
+   * this prop changes and playback starts by itself.
    */
-  route?: 'progressive' | 'hls' | null;
+  route?: 'hls' | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [phase, setPhase] = useState<Phase>('connecting');
@@ -92,96 +82,77 @@ export function CameraPlayer({
       retry = setTimeout(() => !cancelled && setAttempt((n) => n + 1), wait);
     };
 
-    /* ── 3. Progressive MP4, seeked to the live position ── */
-    const startProgressive = async () => {
-      if (cancelled || !videoRef.current) return;
-      let offset = 0;
-      let url = `${STREAM_BASE}/stream/${camera.id}`;
-      try {
-        const st = (await fetchCameraState(camera.id)) as CameraState;
-        if (cancelled) return;
-        offset = st.slot_offset ?? 0;
-        if (st.stream_url) url = `${STREAM_BASE}${st.stream_url}`;
-      } catch {
-        /* fall through with offset 0 — still shows the feed */
-      }
-      // Only seek if the server honours byte ranges. Some containers (mkv/avi)
-      // answer 200 and stream from byte 0 — seeking hours in would mean pulling
-      // gigabytes before a single frame appears, so play from the start instead.
-      let canSeek = false;
-      try {
-        const probe = await fetch(url, { headers: { Range: 'bytes=0-1' } });
-        canSeek = probe.status === 206;
-      } catch {
-        canSeek = false;
-      }
-      if (cancelled) return;
-
-      const el = videoRef.current;
-      if (!el || cancelled) return;
-      el.src = url;
-      const seek = () => {
-        try {
-          if (canSeek && offset > 0) el.currentTime = offset;
-        } catch {
-          /* seeking before metadata; the browser will clamp */
-        }
-        el.play().catch(() => {});
-      };
-      el.addEventListener('loadedmetadata', seek, { once: true });
-      el.onerror = () => fail('Stream unavailable');
-      el.load();
-      setPhase('replay');
-    };
-
-    /* ── 1 & 2. HLS ── */
-    const startHls = (url: string, live: boolean) => {
+    /* ── HLS, positioned at the current point in the 12-hour loop ── */
+    const startHls = (url: string) => {
       if (cancelled || !videoRef.current) return;
       destroyHls();
-      hls = new Hls(
-        live
-          ? {
-              liveSyncDurationCount: 2,
-              liveMaxLatencyDurationCount: 6,
-              liveDurationInfinity: true,
-              lowLatencyMode: true,
-              maxBufferLength: 8,
-              maxMaxBufferLength: 20,
-            }
-          : { maxBufferLength: 30, backBufferLength: 30, lowLatencyMode: false },
-      );
+      hls = new Hls({
+        maxBufferLength: 20,
+        backBufferLength: 20,
+        lowLatencyMode: false,
+        // Segments are AES-128 encrypted and the key is fetched through the
+        // same proxy as the playlist, so it must be allowed to carry cookies.
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = false;
+        },
+      });
+
       hls.loadSource(url);
       hls.attachMedia(videoRef.current);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        videoRef.current?.play().catch(() => {});
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
+        const el = videoRef.current;
+        if (!el || cancelled) return;
+        // A VOD manifest of ~12 hours would otherwise open at segment zero,
+        // which is the middle of the night. Land on the current wall-clock
+        // position within the loop so every tile shows the same moment.
+        const total = data.levels?.[0]?.details?.totalduration
+          ?? hls?.levels?.[0]?.details?.totalduration
+          ?? 0;
+        if (total > 600) {
+          try {
+            el.currentTime = (Date.now() / 1000) % total;
+          } catch {
+            /* the browser clamps if the seek lands outside the buffer */
+          }
+        }
+        el.play().catch(() => {});
       });
+
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
-        // A refused live session is not recoverable by retrying — drop straight
-        // to progressive rather than spinning.
+        // Network hiccups on a live grid are expected; hls.js can recover from
+        // those in place. Only a hard media failure needs a full restart.
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          hls?.startLoad();
+          return;
+        }
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls?.recoverMediaError();
+          return;
+        }
         destroyHls();
-        void startProgressive();
+        fail('Stream unavailable');
       });
     };
 
     const begin = () => {
       if (cancelled) return;
-      const liveUrl = camera.streamUrl;
-      // A probed route beats guessing: live-only cameras have no stored file to
-      // fall back to, and cameras with one play far more reliably from it.
-      if (route === 'progressive') {
-        void startProgressive();
-      } else if (!preferProgressive && liveUrl.includes('.m3u8') && Hls.isSupported()) {
-        startHls(liveUrl, true);
-      } else {
-        void startProgressive();
+      if (!Hls.isSupported()) {
+        // Safari plays HLS natively and has no MSE for hls.js to attach to.
+        const el = videoRef.current;
+        if (!el) return;
+        el.src = camera.streamUrl;
+        el.onerror = () => fail('Stream unavailable');
+        el.play().catch(() => {});
+        return;
       }
+      startHls(camera.streamUrl);
     };
 
     const timer = setTimeout(begin, startDelayMs);
 
-    const onPlaying = () =>
-      setPhase((p) => (p === 'replay' ? 'replay' : 'live'));
+    const onPlaying = () => setPhase('live');
     const onCanPlay = onPlaying;
     v.addEventListener('playing', onPlaying);
     v.addEventListener('canplay', onCanPlay);
@@ -196,7 +167,7 @@ export function CameraPlayer({
       v.removeAttribute('src');
       v.load();
     };
-  }, [camera.id, camera.streamUrl, camera.status, startDelayMs, preferProgressive, route, attempt]);
+  }, [camera.id, camera.streamUrl, camera.status, startDelayMs, route, attempt]);
 
   const showOverlay = phase === 'connecting' || phase === 'error' || phase === 'waiting';
 

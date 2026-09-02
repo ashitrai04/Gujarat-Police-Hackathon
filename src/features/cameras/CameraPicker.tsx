@@ -183,16 +183,10 @@ export function CameraPicker({ onClose }: { onClose: () => void }) {
                               colour={
                                 health[c.id].state === 'available'
                                   ? 'var(--signal)'
-                                  : health[c.id].state === 'live-only'
-                                    ? 'var(--alert)'
-                                    : 'var(--critical)'
+                                  : 'var(--critical)'
                               }
                             >
-                              {health[c.id].state === 'available'
-                                ? 'Streaming'
-                                : health[c.id].state === 'live-only'
-                                  ? 'Live only'
-                                  : 'No stream'}
+                              {health[c.id].state === 'available' ? 'Streaming' : 'No stream'}
                             </Pill>
                           )}
                         </span>

@@ -1,15 +1,22 @@
 /**
- * Real camera registry, sourced from the live Sentinel host.
+ * Real camera registry, sourced from the live Sentinel grid.
  *
- * The host serves technical metadata (resolution, fps, bitrate, bits/pixel)
- * and RTSP/WebRTC/HLS URLs, but no geography or department. Those come from
- * the table below — real junctions, keyed on the LOCATION PREFIX rather than
- * the numeric id, because the host has already re-numbered its cameras once
- * (inserting one camera shifted every later id by +1). The prefix travels with
- * the footage; the id does not.
+ * The grid now serves only `{ id, name }` per camera — the resolution, fps,
+ * bitrate and bits-per-pixel it used to publish are gone, so every technical
+ * field here is null rather than invented. Geography and department come from
+ * the table below, keyed on the LOCATION PREFIX in the name rather than the
+ * id, because the ids have now changed twice (numeric 1..30, then cam01..cam30
+ * after the move to cctv.corp8.cloud). The prefix travels with the footage.
  */
 
 import type { Camera, CamType, Domain } from './types';
+
+/**
+ * RTSP and WHEP are served from the bare public IP, not the CDN host: they
+ * carry TCP/UDP media a CDN cannot proxy. Exposed for the inference pipeline;
+ * the browser cannot use either.
+ */
+export const GRID_IP = '103.250.160.189';
 
 /**
  * Talk to live.corp8.cloud directly, NOT live.sentinelgujarat.in.
@@ -41,33 +48,14 @@ export const SENTINEL_HOST =
  */
 export const STREAM_BASE = import.meta.env.VITE_STREAM_BASE || DEFAULT_PROXY;
 
-/** Raw shape returned by GET /api/cameras. */
+/** Raw shape returned by GET /cameras.json — a flat array, nothing more. */
 export interface RawCamera {
   id: string;
-  number: number;
   name: string;
-  location: string;
-  duration: number | null;
-  codec: string;
-  container: string;
-  status: string;
-  delivery: string;
-  remote_transcode: boolean;
-  detail: string;
-  width: number;
-  height: number;
-  fps: number;
-  bitrate_kbps: number;
-  bits_per_pixel: number;
-  rtsp_url: string;
-  webrtc_url: string;
-  hls_live_url: string;
 }
 
-export interface RegistryResponse {
-  cameras: RawCamera[];
-  catalog: { state: string; count: number; scanned_at: number; stale: boolean; error: string };
-}
+/** `GET /cameras.json` returns the array directly — there is no envelope. */
+export type RegistryResponse = RawCamera[];
 
 interface Place {
   district: string;
@@ -139,67 +127,69 @@ function placeFor(location: string): Place | null {
 }
 
 /**
- * ANPR suitability from the host's own bits-per-pixel figure.
+ * ANPR suitability.
  *
- * Measured against these feeds: compression quality alone does NOT predict
- * plate yield — camera geometry dominates. So this is a hint for the operator,
- * not a hard capability flag, and cameras the host has not probed yet
- * (width === 0) are reported as unknown rather than guessed.
+ * This used to be derived from the host's bits-per-pixel figure. The grid no
+ * longer publishes resolution or bitrate, so there is nothing to derive it
+ * from and every camera reports `unknown` rather than a fabricated grade.
+ *
+ * That loses little: measured against these feeds, compression quality never
+ * predicted plate yield anyway — camera geometry dominated. One camera graded
+ * "good" returned zero plates; a "poor" one returned thirteen. Real grading
+ * belongs to the ANPR pipeline, which can measure plate pixel width directly.
  */
 export type AnprGrade = 'good' | 'fair' | 'poor' | 'unknown';
 
-export function anprGrade(raw: RawCamera): AnprGrade {
-  if (!raw.width || !raw.bits_per_pixel) return 'unknown';
-  if (raw.bits_per_pixel >= 0.09) return 'good';
-  if (raw.bits_per_pixel >= 0.045) return 'fair';
-  return 'poor';
+export function anprGrade(_raw: RawCamera): AnprGrade {
+  return 'unknown';
 }
 
-/** Strip the numeric prefix the host uses for ordering. */
+/** Strip the numeric prefix the grid uses for ordering. */
 function cleanName(location: string, place: Place | null): string {
   if (place) return place.label;
   return location.replace(/^\d{1,2}\s+/, '').trim() || location;
 }
 
 export function toCamera(raw: RawCamera): Camera {
-  const place = placeFor(raw.location);
-  const grade = anprGrade(raw);
+  const place = placeFor(raw.name);
   const known = !!place;
 
   return {
     id: raw.id,
-    name: cleanName(raw.location, place),
+    name: cleanName(raw.name, place),
     department: place ? DEPT_BY_DOMAIN[place.domain] : 'Unassigned',
     domain: place?.domain ?? 'public',
     tags: [
       place?.district.toLowerCase() ?? 'unmapped',
       place?.domain ?? 'public',
-      grade,
-      raw.container,
-      ...(raw.remote_transcode ? ['transcoded'] : []),
+      'hls',
     ].filter(Boolean),
-    camType: place?.camType ?? (/ptz/i.test(raw.location) ? 'ptz' : 'fixed'),
-    // Grade is advisory; treat good/fair as worth pointing ANPR at.
-    anprCapable: grade === 'good' || grade === 'fair',
-    streamUrl: raw.hls_live_url
-      ? `${STREAM_BASE}${raw.hls_live_url}`
-      : `${STREAM_BASE}/stream/${raw.id}`,
-    status: raw.status === 'live' ? 'online' : raw.status === 'processing' ? 'degraded' : 'offline',
+    camType: place?.camType ?? (/ptz/i.test(raw.name) ? 'ptz' : 'fixed'),
+    // Nothing in the catalogue speaks to ANPR suitability any more, so this is
+    // left to the pipeline rather than guessed here.
+    anprCapable: false,
+    // HLS is the only browser-playable route: RTSP and WHEP are raw media on a
+    // bare IP that no CDN can proxy, and WHEP is plain HTTP, which an HTTPS
+    // page cannot load at all.
+    streamUrl: `${STREAM_BASE}/${raw.id}/index.m3u8`,
+    // The catalogue publishes no status field; the health probe decides.
+    status: 'online',
     lat: place?.lat ?? 22.6,
     lng: place?.lng ?? 71.9,
     district: place?.district ?? 'Unmapped',
     zoneId: `Z-${(place?.district ?? 'UNMAP').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4)}`,
-    // Real technical facts straight from the host.
-    width: raw.width || null,
-    height: raw.height || null,
-    fps: raw.fps || null,
-    bitrateKbps: raw.bitrate_kbps || null,
-    bitsPerPixel: raw.bits_per_pixel || null,
-    codec: raw.codec || null,
-    container: raw.container,
-    rtspUrl: raw.rtsp_url,
-    webrtcUrl: raw.webrtc_url,
-    anprGrade: grade,
+    // The grid stopped publishing these. Null, not invented.
+    width: null,
+    height: null,
+    fps: null,
+    bitrateKbps: null,
+    bitsPerPixel: null,
+    codec: null,
+    container: 'hls',
+    // Direct-IP routes, for the inference pipeline rather than the browser.
+    rtspUrl: `rtsp://${GRID_IP}:8554/stream/${raw.id}`,
+    webrtcUrl: `http://${GRID_IP}:8889/stream/${raw.id}/whep`,
+    anprGrade: 'unknown',
     geoKnown: known,
   };
 }
@@ -232,9 +222,13 @@ async function getJson<T>(path: string, tries = 4): Promise<T> {
   throw last instanceof Error ? last : new Error('Registry unreachable');
 }
 
-export async function fetchRegistry(): Promise<{ cameras: Camera[]; catalog: RegistryResponse['catalog'] }> {
-  const json = await getJson<RegistryResponse>('/api/cameras');
-  return { cameras: json.cameras.map(toCamera), catalog: json.catalog };
+export async function fetchRegistry(): Promise<{ cameras: Camera[] }> {
+  const json = await getJson<RegistryResponse>('/cameras.json');
+  return { cameras: json.map(toCamera) };
 }
 
-export const fetchCameraState = (id: string) => getJson(`/api/cameras/${id}/state`);
+/**
+ * The old host exposed /api/cameras/<id>/state with a `slot_offset` saying
+ * where "now" sat inside the 12-hour loop. The new grid has no such endpoint,
+ * so the position is computed from the playlist instead — see CameraPlayer.
+ */
