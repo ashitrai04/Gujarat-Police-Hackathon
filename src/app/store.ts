@@ -4,6 +4,7 @@ import type {
   Alert,
   Camera,
   CameraStatus,
+  CamType,
   Domain,
   Role,
   Route,
@@ -19,7 +20,14 @@ export const BASE_STYLES: Record<BaseStyle, { label: string; url: string }> = {
   outdoors: { label: 'Terrain', url: 'mapbox://styles/mapbox/outdoors-v12' },
 };
 
-export type PoiLayer = 'hospital' | 'police' | 'fuel' | 'bus_station';
+/**
+ * Reference points an operator reasons about while following a vehicle.
+ * Toll plazas and railway stations are here for a specific reason: a vehicle
+ * leaving the state passes a toll, and those are the natural interception
+ * points on a traced route.
+ */
+export type PoiLayer =
+  | 'hospital' | 'police' | 'fuel' | 'bus_station' | 'toll' | 'railway';
 
 /**
  * Gujarat GIS overlays from the supplied GeoPackage. The file's `cameras`
@@ -37,6 +45,8 @@ export type RightPanel =
   | { kind: 'events' }
   | { kind: 'health' }
   | { kind: 'registry' };
+
+export const ALL_CAM_TYPES: CamType[] = ['fixed', 'ptz'];
 
 export const ALL_DOMAINS: Domain[] = ['traffic', 'hospital', 'pds', 'rto', 'public'];
 
@@ -60,6 +70,8 @@ interface State {
   pois: PoiLayer[];
   gis: GisLayer[];
   toggleDomain: (d: Domain) => void;
+  camTypes: CamType[];
+  toggleCamType: (t: CamType) => void;
   toggleStatus: (s: CameraStatus) => void;
   setAnprOnly: (v: boolean) => void;
   setQuery: (q: string) => void;
@@ -144,6 +156,15 @@ export const useStore = create<State>()(
   setPitch: (pitch) => set({ pitch }),
 
   domains: [...ALL_DOMAINS],
+  // Camera capability, separate from department. An operator hunting a plate
+  // wants only the cameras that can read one, regardless of who owns them.
+  camTypes: [...ALL_CAM_TYPES],
+  toggleCamType: (t) =>
+    set((x) => ({
+      camTypes: x.camTypes.includes(t)
+        ? x.camTypes.filter((y) => y !== t)
+        : [...x.camTypes, t],
+    })),
   statuses: ['online', 'offline', 'degraded'],
   anprOnly: false,
   query: '',
@@ -180,6 +201,15 @@ export const useStore = create<State>()(
   clearFilters: () =>
     set({
       domains: [...ALL_DOMAINS],
+  // Camera capability, separate from department. An operator hunting a plate
+  // wants only the cameras that can read one, regardless of who owns them.
+  camTypes: [...ALL_CAM_TYPES],
+  toggleCamType: (t) =>
+    set((x) => ({
+      camTypes: x.camTypes.includes(t)
+        ? x.camTypes.filter((y) => y !== t)
+        : [...x.camTypes, t],
+    })),
       statuses: ['online', 'offline', 'degraded'],
       anprOnly: false,
       query: '',

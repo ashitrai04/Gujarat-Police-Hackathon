@@ -25,6 +25,7 @@ import {
   setVisible,
 } from './layers';
 import { ensureDomainIcons } from './icons';
+import { matchToRoads } from './roadMatch';
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
 const GUJARAT: [number, number] = [71.9, 22.6];
@@ -52,10 +53,11 @@ export function MapView() {
   const s = useStore();
 
   const { data: geo } = useQuery({
-    queryKey: ['cameras.geojson', s.domains, s.statuses, s.anprOnly, s.query],
+    queryKey: ['cameras.geojson', s.domains, s.camTypes, s.statuses, s.anprOnly, s.query],
     queryFn: () =>
       api.camerasGeoJSON({
         domains: s.domains,
+        camTypes: s.camTypes,
         status: s.statuses,
         anprOnly: s.anprOnly,
         q: s.query,
@@ -353,11 +355,29 @@ export function MapView() {
   }, [ready, styleTick]);
 
   /* ── Route animation ──────────────────────────────────────── */
+
+  /* Match the route to the road network once, when it arrives. Doing this per
+     frame of the playback slider would fire a request on every tick. */
+  const [snapped, setSnapped] = useState<[number, number][] | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!s.trace) {
+      setSnapped(null);
+      return;
+    }
+    void matchToRoads(s.trace).then((m) => {
+      if (live) setSnapped(m?.snapped ? m.coordinates : null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [s.trace]);
+
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
-    setRouteProgress(m, s.trace, s.traceProgress);
-  }, [s.trace, s.traceProgress, ready, styleTick]);
+    setRouteProgress(m, s.trace, s.traceProgress, snapped);
+  }, [s.trace, s.traceProgress, snapped, ready, styleTick]);
 
   useEffect(() => {
     if (!s.trace || !map.current || !s.trace.stops.length) return;

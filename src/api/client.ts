@@ -39,6 +39,7 @@ async function allCameras(): Promise<Camera[]> {
 
 function matches(c: Camera, q: CameraQuery): boolean {
   if (q.domains?.length && !q.domains.includes(c.domain)) return false;
+  if (q.camTypes?.length && !q.camTypes.includes(c.camType)) return false;
   if (q.status?.length && !q.status.includes(c.status)) return false;
   if (q.anprOnly && !c.anprCapable) return false;
   if (q.q) {

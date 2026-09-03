@@ -4,9 +4,10 @@ import {
   Activity, Bus, Crosshair, Flame, Fuel, Hospital, Map as MapIcon,
   PanelLeftClose, PanelLeftOpen, Radio, Shield, ListFilter,
   Route as RouteIcon, Search, Siren, Database as DatabaseIcon,
+  CircleDollarSign, TrainFront, Video,
 } from 'lucide-react';
 import { api } from '@/api/client';
-import { ALL_DOMAINS, useStore, type PoiLayer } from './store';
+import { ALL_CAM_TYPES, ALL_DOMAINS, useStore, type PoiLayer } from './store';
 import { useBreakpoint } from './useBreakpoint';
 import { DOMAIN_COLOR, DOMAIN_LABEL, type CameraStatus, type Domain } from '@/api/types';
 import { Button, Empty, SectionHeader, StatusDot, ToggleRow } from '@/components/ui';
@@ -30,6 +31,8 @@ const POI_META: Record<PoiLayer, { label: string; icon: typeof Hospital; colour:
   police: { label: 'Police stations', icon: Shield, colour: '#38BDF8' },
   fuel: { label: 'Fuel stations', icon: Fuel, colour: '#FBBF24' },
   bus_station: { label: 'Bus depots', icon: Bus, colour: '#A78BFA' },
+  toll: { label: 'Toll plazas', icon: CircleDollarSign, colour: '#FB923C' },
+  railway: { label: 'Railway stations', icon: TrainFront, colour: '#22D3EE' },
 };
 
 const STATUSES: CameraStatus[] = ['online', 'degraded', 'offline'];
@@ -58,6 +61,7 @@ export function LeftRail() {
     () =>
       scoped.filter((c) => {
         if (!s.domains.includes(c.domain)) return false;
+        if (!s.camTypes.includes(c.camType)) return false;
         if (!s.statuses.includes(c.status)) return false;
         if (s.anprOnly && !c.anprCapable) return false;
         if (s.query) {
@@ -66,7 +70,7 @@ export function LeftRail() {
         }
         return true;
       }).length,
-    [scoped, s.domains, s.statuses, s.anprOnly, s.query],
+    [scoped, s.domains, s.camTypes, s.statuses, s.anprOnly, s.query],
   );
 
   const filtersActive =
@@ -179,6 +183,27 @@ export function LeftRail() {
                 aria-hidden
                 className="h-[18px] w-[18px] shrink-0 object-contain"
               />
+            }
+          />
+        ))}
+      </div>
+
+      {/* Camera capability, separate from department: an operator hunting a
+          plate wants the cameras that can read one, whoever owns them. */}
+      <SectionHeader>Camera type</SectionHeader>
+      <div className="px-1.5 pb-1">
+        {ALL_CAM_TYPES.map((t) => (
+          <ToggleRow
+            key={t}
+            on={s.camTypes.includes(t)}
+            onClick={() => s.toggleCamType(t)}
+            colour="var(--signal)"
+            label={t === 'ptz' ? 'PTZ (steerable)' : 'Fixed'}
+            count={scoped.filter((c) => c.camType === t).length}
+            icon={
+              t === 'ptz'
+                ? <Crosshair size={12} style={{ color: 'var(--signal)' }} />
+                : <Video size={12} style={{ color: 'var(--signal)' }} />
             }
           />
         ))}

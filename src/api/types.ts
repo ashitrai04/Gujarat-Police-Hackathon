@@ -116,6 +116,7 @@ export interface HealthSummary {
 
 export interface CameraQuery {
   domains?: Domain[];
+  camTypes?: CamType[];
   status?: CameraStatus[];
   q?: string;
   anprOnly?: boolean;

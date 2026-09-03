@@ -325,25 +325,44 @@ export function ensureRouteLayers(map: mapboxgl.Map) {
 }
 
 /** Draw the route up to `progress` (0..1) so it can animate. */
-export function setRouteProgress(map: mapboxgl.Map, route: Route | null, progress: number) {
+/**
+ * Draw the traced route.
+ *
+ * `snapped` is the road-matched geometry when Mapbox could resolve one. It is
+ * passed in rather than fetched here so the network call is not repeated on
+ * every frame of the playback slider — the geometry is matched once when the
+ * route arrives, then sliced as progress advances.
+ */
+export function setRouteProgress(
+  map: mapboxgl.Map,
+  route: Route | null,
+  progress: number,
+  snapped?: [number, number][] | null,
+) {
   if (!map.getSource(SRC.route)) return;
   if (!route || route.stops.length < 1) {
     setData(map, SRC.route, EMPTY);
     setData(map, SRC.routeStops, EMPTY);
     return;
   }
-  const n = Math.max(1, Math.round(route.stops.length * Math.min(1, Math.max(0, progress))));
+  const p = Math.min(1, Math.max(0, progress));
+  const n = Math.max(1, Math.round(route.stops.length * p));
   const shown = route.stops.slice(0, n);
+
+  // The road-matched line has far more vertices than there are sightings, so
+  // it is sliced by the same fraction rather than by stop count. That keeps the
+  // drawn line and the highlighted stops advancing together.
+  const line = snapped?.length
+    ? snapped.slice(0, Math.max(2, Math.round(snapped.length * p)))
+    : shown.map((s) => [s.lng, s.lat] as [number, number]);
+
   setData(map, SRC.route, {
     type: 'FeatureCollection',
     features: [
       {
         type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: shown.map((s) => [s.lng, s.lat]),
-        },
+        properties: { snapped: !!snapped?.length },
+        geometry: { type: 'LineString', coordinates: line },
       },
     ],
   });
