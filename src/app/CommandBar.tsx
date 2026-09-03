@@ -6,6 +6,7 @@ import { BASE_STYLES, useStore, type BaseStyle } from './store';
 import { useBreakpoint } from './useBreakpoint';
 import type { Role } from '@/api/types';
 import { Button, Pill } from '@/components/ui';
+import { AuthBar } from './AuthBar';
 import { ANPR_CONNECTED } from '@/api/client';
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -172,6 +173,11 @@ export function CommandBar() {
           {ANPR_CONNECTED ? 'ANPR live' : 'ANPR offline'}
         </Pill>
       )}
+
+      {/* Real identity, from Supabase. The role switcher below it is a demo
+          convenience for showing different operator views; this is the one
+          that actually decides what the database will let you do. */}
+      <AuthBar />
 
       {/* Role switcher */}
       <div className="relative">
