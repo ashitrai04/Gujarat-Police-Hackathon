@@ -21,12 +21,16 @@ export interface StreamHealth {
 
 const TIMEOUT_MS = 15000;
 /**
- * Gap between probes on one worker. Measured on the deployed site: 30 probes
- * fired back to back had cameras 7, 9, 10, 11 and 12 answer 502, and the same
- * five returned 206 when spaced 3s apart. The host throttles bursts, so the
- * sweep is deliberately unhurried — it only has to finish inside the poll.
+ * Gap between probes on one worker.
+ *
+ * The grid revokes a session that fetches too hard — measured directly: a burst
+ * of requests got every path 403'd, /cameras.json included, while a fresh login
+ * worked immediately. Its own integration guide says "open only the cameras you
+ * are actively processing", and a 30-camera sweep every minute is the opposite
+ * of that. The sweep is now slow on purpose; it only has to finish inside the
+ * poll interval.
  */
-const PACE_MS = 500;
+const PACE_MS = 2000;
 
 /** A response that says nothing about the camera, only about the moment. */
 function transient(res: Response | null): boolean {
@@ -81,9 +85,17 @@ export async function probeCamera(cam: Camera): Promise<StreamHealth> {
 }
 
 /** Probe the estate a few at a time — the host throttles request bursts. */
+/**
+ * Probe a set of cameras.
+ *
+ * Callers pass only the cameras that matter — the ones on the wall — rather
+ * than the whole estate. Probing all 30 costs 30 upstream requests per poll
+ * for cameras nobody is watching, which is exactly what gets the session
+ * revoked.
+ */
 export async function probeAll(
   cams: Camera[],
-  concurrency = 2,
+  concurrency = 1,
 ): Promise<Record<string, StreamHealth>> {
   const out: Record<string, StreamHealth> = {};
   let cursor = 0;

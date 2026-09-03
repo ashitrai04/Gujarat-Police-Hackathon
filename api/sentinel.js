@@ -24,6 +24,11 @@ export const config = { runtime: 'edge' };
  *    bytes and the <video> element fires `error` — the bug that had every tile
  *    reading "Stream unavailable" before.
  *
+ * ONE SESSION PER IP. The grid evicts an address's previous session whenever
+ * it signs in again, so only one client per machine can hold the feed at a
+ * time. Two dev servers, or a dev server plus a browser tab logged into
+ * cctv.corp8.cloud, will take turns 403ing each other.
+ *
  * RTSP (:8554) and WHEP (:8889) are deliberately not proxied. They are TCP/UDP
  * media on a bare IP that a CDN cannot carry, and WHEP is plain HTTP — an
  * HTTPS page cannot load it without a mixed-content block. Browser playback
@@ -49,6 +54,21 @@ const STRIP = new Set([
    Cached per isolate; a cold start simply signs in again. */
 let session = null;
 let signingIn = null;
+let lastSignIn = 0;
+
+/**
+ * The grid allows ONE SESSION PER IP. Signing in evicts whatever session that
+ * address already held — confirmed by the upstream's own 403 body, which reads
+ * "one session per IP".
+ *
+ * That makes a naive retry dangerous rather than merely wasteful: two clients
+ * behind the same address, each re-authenticating when it sees a 403, will
+ * evict each other forever and neither will ever play. So a re-login is rate
+ * limited. Past the cooldown we try once; inside it we relay the 403 and let
+ * the caller back off, which is the behaviour that lets the other client keep
+ * its session instead of both starving.
+ */
+const RELOGIN_COOLDOWN_MS = 30_000;
 
 async function signIn() {
   if (!ACCESS_KEY) throw new Error('SENTINEL_ACCESS_KEY is not set');
@@ -76,7 +96,10 @@ async function signIn() {
 
 async function cookie(force = false) {
   if (session && !force) return session;
+  if (force && Date.now() - lastSignIn < RELOGIN_COOLDOWN_MS) return session;
+
   if (!signingIn) {
+    lastSignIn = Date.now();
     signingIn = signIn()
       .then((c) => {
         session = c;
@@ -129,13 +152,25 @@ export default async function handler(req) {
   let res;
   try {
     res = await fetchUpstream(await cookie());
-    // A redirect to /auth/ means the session lapsed — sign in again and retry
-    // once. Anything else is the upstream's own answer.
-    if (
-      res.status >= 300 && res.status < 400 &&
-      (res.headers.get('location') || '').includes('/auth/')
-    ) {
-      res = await fetchUpstream(await cookie(true));
+
+    // Two ways a session dies, and both need a fresh sign-in rather than being
+    // relayed to the browser as a failure:
+    //
+    //   302 -> /auth/  the cookie expired
+    //   403            the grid revoked the session for fetching too hard.
+    //                  Measured: a burst of segment requests gets every path
+    //                  403'd, including /cameras.json, while a fresh login
+    //                  immediately works — so it is the session that is
+    //                  blocked, not the address.
+    const lapsed =
+      (res.status >= 300 && res.status < 400 &&
+        (res.headers.get('location') || '').includes('/auth/')) ||
+      res.status === 403;
+    if (lapsed) {
+      const fresh = await cookie(true);
+      // Inside the cooldown `cookie(true)` returns the session we already have,
+      // so there is nothing to gain from repeating the request.
+      if (fresh && fresh !== 'undefined') res = await fetchUpstream(fresh);
     }
   } catch (err) {
     return new Response(`Upstream unreachable: ${err.message}`, {

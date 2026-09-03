@@ -40,6 +40,10 @@ async function signIn(): Promise<string> {
 /**
  * Sign in before the server starts.
  *
+ * NOTE: the grid allows one session per IP and evicts the previous one on every
+ * login. Running two dev servers, or leaving a browser tab signed in to
+ * cctv.corp8.cloud, means they take turns 403ing each other. Run one.
+ *
  * http-proxy's `proxyReq` handler is synchronous — awaiting inside it sets the
  * header after the request has already gone out, which showed up as the grid
  * 302ing every call to /auth/login. Resolving the session here means the
