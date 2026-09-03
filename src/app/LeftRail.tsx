@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Activity, Bus, Crosshair, Flame, Fuel, Hospital, Map as MapIcon,
   PanelLeftClose, PanelLeftOpen, Radio, Shield, ListFilter,
-  Route as RouteIcon, Search, Siren,
+  Route as RouteIcon, Search, Siren, Database as DatabaseIcon,
 } from 'lucide-react';
 import { api } from '@/api/client';
 import { ALL_DOMAINS, useStore, type PoiLayer } from './store';
@@ -100,6 +100,7 @@ export function LeftRail() {
           { icon: Siren, label: 'Watchlist', p: { kind: 'watchlist' as const } },
           { icon: Search, label: 'Event search', p: { kind: 'events' as const } },
           { icon: Radio, label: 'Camera health', p: { kind: 'health' as const } },
+          { icon: DatabaseIcon, label: 'Registry & onboarding', p: { kind: 'registry' as const } },
         ].map(({ icon: Icon, label, p }) => (
           <button
             key={label}
@@ -311,6 +312,7 @@ export function LeftRail() {
         <RailButton icon={Siren} label="Watchlist" onClick={() => s.openPanel({ kind: 'watchlist' })} />
         <RailButton icon={Search} label="Event search & report" onClick={() => s.openPanel({ kind: 'events' })} />
         <RailButton icon={Radio} label="Camera health" onClick={() => s.openPanel({ kind: 'health' })} />
+        <RailButton icon={DatabaseIcon} label="Registry & onboarding" onClick={() => s.openPanel({ kind: 'registry' })} />
       </div>
 
       <div className="px-3 pb-3">

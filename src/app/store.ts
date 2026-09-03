@@ -35,7 +35,8 @@ export type RightPanel =
   | { kind: 'trace' }
   | { kind: 'watchlist' }
   | { kind: 'events' }
-  | { kind: 'health' };
+  | { kind: 'health' }
+  | { kind: 'registry' };
 
 export const ALL_DOMAINS: Domain[] = ['traffic', 'hospital', 'pds', 'rto', 'public'];
 

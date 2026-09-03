@@ -19,7 +19,7 @@ import type {
   Route,
   WatchlistItem,
 } from './types';
-import { fetchRegistry } from './registry';
+import { listCameras } from './cameraStore';
 import { anpr, ANPR_CONNECTED, subscribeAlerts as subAlerts } from './anpr';
 
 export { ANPR_CONNECTED };
@@ -30,7 +30,9 @@ const TTL = 60_000;
 
 async function allCameras(): Promise<Camera[]> {
   if (cache && Date.now() - cache.at < TTL) return cache.cameras;
-  const { cameras } = await fetchRegistry();
+  // The registry is authoritative once a database is configured; the live
+  // grid catalogue is the read-only fallback until then.
+  const cameras = await listCameras();
   cache = { at: Date.now(), cameras };
   return cameras;
 }

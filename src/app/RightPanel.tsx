@@ -8,6 +8,7 @@ import { CATEGORY_COLOR, DOMAIN_COLOR, DOMAIN_LABEL } from '@/api/types';
 import { TracePanel } from '@/features/tracking/TracePanel';
 import { WatchlistPanel } from '@/features/alerts/WatchlistPanel';
 import { EventsPanel } from '@/features/events/EventsPanel';
+import { OnboardingPanel } from '@/features/onboarding/OnboardingPanel';
 import { HealthPanel } from '@/features/health/HealthPanel';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -22,6 +23,7 @@ export function RightPanel() {
     : panel.kind === 'watchlist' ? 'Watchlist'
     : panel.kind === 'events' ? 'Event search'
     : panel.kind === 'health' ? 'Camera health'
+    : panel.kind === 'registry' ? 'Camera registry & onboarding'
     : '';
 
   return (
@@ -55,6 +57,7 @@ export function RightPanel() {
         {panel.kind === 'watchlist' && <WatchlistPanel />}
         {panel.kind === 'events' && <EventsPanel />}
         {panel.kind === 'health' && <HealthPanel />}
+        {panel.kind === 'registry' && <OnboardingPanel />}
       </div>
     </aside>
   );
