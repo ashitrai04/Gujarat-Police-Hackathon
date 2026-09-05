@@ -44,14 +44,20 @@ export function App() {
   }, [seeded, setAlerts]);
 
   useEffect(() => {
-    return subscribeAlerts((a) => {
-      pushAlert(a);
-      // Only surface the alert panel if the operator is not already working in
-      // another one. Stealing focus mid-trace loses their place; the bell's
-      // unread badge and the map pulse are enough to signal a new match.
-      if (useStore.getState().panel.kind === 'none') {
-        openPanel({ kind: 'alert', alertId: a.id });
-      }
+    // Realtime delivers the bare row without its joins, so the panel refetches
+    // rather than rendering a half-populated card.
+    return subscribeAlerts(() => {
+      void api.alerts().then((rows) => {
+        const latest = rows[0];
+        if (!latest) return;
+        pushAlert(latest);
+        // Only surface the alert panel if the operator is not already working
+        // in another one. Stealing focus mid-trace loses their place; the
+        // bell's unread badge and the map pulse are enough to signal a match.
+        if (useStore.getState().panel.kind === 'none') {
+          openPanel({ kind: 'alert', alertId: latest.id });
+        }
+      });
     });
   }, [pushAlert, openPanel]);
 

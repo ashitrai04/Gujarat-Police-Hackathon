@@ -20,10 +20,19 @@ import type {
   WatchlistItem,
 } from './types';
 import { listCameras } from './cameraStore';
-import { anpr, ANPR_CONNECTED, subscribeAlerts as subAlerts } from './anpr';
+import {
+  ackAlert, addWatchlist, listAlerts, listDetections, listWatchlist,
+  plateRoute, removeWatchlist, searchPlates, subscribeAlerts, toggleWatchlist,
+} from './detections';
+import { DB_READY } from './db';
 
-export { ANPR_CONNECTED };
-export const subscribeAlerts = subAlerts;
+/**
+ * Analytics are live when a database is configured — that is where detections
+ * land and where the UI reads them. There is no separate ANPR service to be
+ * connected to any more.
+ */
+export const ANPR_CONNECTED = DB_READY;
+export { subscribeAlerts };
 
 let cache: { at: number; cameras: Camera[] } | null = null;
 const TTL = 60_000;
@@ -124,15 +133,32 @@ export const api = {
     };
   },
 
-  /* ── Everything below is served by the ANPR pipeline ── */
-  detections: (q: DetectionQuery = {}): Promise<Detection[]> => anpr.detections(q),
-  route: (plate: string): Promise<Route> => anpr.route(plate),
-  watchlist: (): Promise<WatchlistItem[]> => anpr.watchlist(),
-  addWatchlist: (i: Omit<WatchlistItem, 'id'>): Promise<WatchlistItem> => anpr.addWatchlist(i),
-  toggleWatchlist: (id: string, active: boolean): Promise<WatchlistItem> =>
-    anpr.toggleWatchlist(id, active),
-  removeWatchlist: (id: string): Promise<void> => anpr.removeWatchlist(id),
-  alerts: (): Promise<Alert[]> => anpr.alerts(),
-  ackAlert: (id: string): Promise<void> => anpr.ackAlert(id),
-  attachAnalysis: (cameraId: string, streamUrl: string) => anpr.attach(cameraId, streamUrl),
+  /* ── Analytics, read from the same database the worker writes to ──
+     There is no ANPR HTTP service in between: it would have restated one
+     query per endpoint and given the deployment another process to keep
+     alive, while losing row-level security on analytics data. ── */
+  detections: (q: DetectionQuery = {}): Promise<Detection[]> => listDetections(q),
+
+  route: async (plate: string): Promise<Route> => {
+    // Camera geography lives in the registry, sightings in `detections`.
+    // Joining here keeps the route query itself a single indexed lookup.
+    const cams = await allCameras();
+    return plateRoute(plate, cams.map((c) => ({
+      id: c.id, name: c.name, lat: c.lat, lng: c.lng, district: c.district,
+    })));
+  },
+
+  searchPlates: (term: string, limit?: number) => searchPlates(term, limit),
+
+  watchlist: (): Promise<WatchlistItem[]> => listWatchlist(),
+  addWatchlist: (i: Omit<WatchlistItem, 'id'>): Promise<WatchlistItem> => addWatchlist(i),
+  toggleWatchlist: async (id: string, active: boolean): Promise<WatchlistItem> => {
+    await toggleWatchlist(id, active);
+    const all = await listWatchlist();
+    return all.find((w) => w.id === id)!;
+  },
+  removeWatchlist: (id: string): Promise<void> => removeWatchlist(id),
+
+  alerts: (): Promise<Alert[]> => listAlerts(),
+  ackAlert: (id: string): Promise<void> => ackAlert(id),
 };
