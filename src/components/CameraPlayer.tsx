@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { StatusDot } from './ui';
 import type { Camera } from '@/api/types';
+import { ARCHIVE_DATE, fallbackUrl, loadFallbackIndex } from '@/api/fallback';
 
-type Phase = 'connecting' | 'live' | 'replay' | 'error' | 'waiting';
+type Phase = 'connecting' | 'live' | 'replay' | 'error' | 'waiting' | 'archive';
 
 /** Backoff between reconnect attempts, in ms. Caps so a dead feed stays cheap. */
 const RETRY_MS = [6000, 12000, 25000, 45000, 60000];
@@ -82,8 +83,9 @@ export function CameraPlayer({
       retry = setTimeout(() => !cancelled && setAttempt((n) => n + 1), wait);
     };
 
-    /* ── HLS, positioned at the current point in the 12-hour loop ── */
-    const startHls = (url: string) => {
+    /* ── HLS. `archive` marks the recorded fallback, which must never be
+           presented as live — see the badge in the header below. ── */
+    const startHls = (url: string, archive = false) => {
       if (cancelled || !videoRef.current) return;
       destroyHls();
       hls = new Hls({
@@ -109,12 +111,18 @@ export function CameraPlayer({
         const total = data.levels?.[0]?.details?.totalduration
           ?? hls?.levels?.[0]?.details?.totalduration
           ?? 0;
-        if (total > 600) {
+        // Only the live grid's ~12-hour loop needs positioning at wall clock.
+        // An archived clip is a couple of minutes long and starts at zero.
+        if (!archive && total > 600) {
           try {
             el.currentTime = (Date.now() / 1000) % total;
           } catch {
             /* the browser clamps if the seek lands outside the buffer */
           }
+        }
+        if (archive) {
+          el.loop = true;
+          setPhase('archive');
         }
         el.play().catch(() => {});
       });
@@ -132,12 +140,22 @@ export function CameraPlayer({
           return;
         }
         destroyHls();
+        // The live feed is gone. If this camera has an archived clip, play it
+        // rather than showing a dead tile — but only ever labelled as archive.
+        const alt = archive ? null : fallbackUrl(camera.id);
+        if (alt) {
+          startHls(alt, true);
+          return;
+        }
         fail('Stream unavailable');
       });
     };
 
     const begin = () => {
       if (cancelled) return;
+      // Knowing which cameras have an archive up front means a failing tile
+      // switches immediately instead of waiting on a fetch at the worst moment.
+      void loadFallbackIndex();
       if (!Hls.isSupported()) {
         // Safari plays HLS natively and has no MSE for hls.js to attach to.
         const el = videoRef.current;
@@ -152,7 +170,8 @@ export function CameraPlayer({
 
     const timer = setTimeout(begin, startDelayMs);
 
-    const onPlaying = () => setPhase('live');
+    // A recorded tile that starts playing must NOT relabel itself as live.
+    const onPlaying = () => setPhase((p) => (p === 'archive' ? 'archive' : 'live'));
     const onCanPlay = onPlaying;
     v.addEventListener('playing', onPlaying);
     v.addEventListener('canplay', onCanPlay);
@@ -210,7 +229,17 @@ export function CameraPlayer({
           <span className="truncate text-[10.5px] font-medium" style={{ color: '#E7ECF3' }}>
             {camera.name}
           </span>
-          {(phase === 'live' || phase === 'replay') && (
+          {phase === 'archive' ? (
+            /* Deliberately the loudest label on the tile. Recorded footage
+               shown in a control room must never be mistaken for live. */
+            <span
+              className="mono ml-auto flex shrink-0 items-center gap-1 rounded-[3px] px-1.5 py-[1px] text-[9px] font-bold"
+              style={{ background: '#F5A524', color: '#1A1206' }}
+              title={`Live feed unavailable — playing recorded footage captured ${ARCHIVE_DATE}. This is NOT a live view.`}
+            >
+              RECORDED · {ARCHIVE_DATE}
+            </span>
+          ) : (phase === 'live' || phase === 'replay') && (
             <span
               className="mono ml-auto flex shrink-0 items-center gap-1 text-[9px]"
               style={{ color: phase === 'live' ? '#F87171' : 'var(--text-dim)' }}

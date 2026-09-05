@@ -31,3 +31,6 @@ coverage
 
 # Source GeoPackage — layers are exported to public/geo as GeoJSON
 gujarat_shp
+
+# Packaged HLS archive lives in object storage, not the repo
+/feed_recordings_hls/
