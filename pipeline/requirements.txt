@@ -1,0 +1,10 @@
+# Sentinel inference worker.
+# Needs a CUDA GPU for realistic throughput; runs on CPU far more slowly.
+
+ultralytics>=8.3          # YOLO11m + ByteTrack (from the team pipeline)
+open-image-models[onnx]   # YOLOv9-t plate detector
+paddleocr>=3.0            # PP-OCRv5 recognition — replaces EasyOCR, see worker docstring
+paddlepaddle              # PaddleOCR runtime
+opencv-python
+numpy
+supabase>=2.0             # writes detections into the registry
