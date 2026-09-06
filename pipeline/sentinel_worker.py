@@ -53,18 +53,38 @@ def _load_env_file() -> None:
     a 401, and both arrive hundreds of frames into a job that has already done
     all its expensive work. Setting them once in a file removes that entirely.
 
-    Values already exported win, so CI or a one-off override still works.
+    An exported value normally wins, so CI or a deliberate override still
+    works. The exception is a value that cannot possibly be right: a shell that
+    still holds a truncated key from an earlier attempt would otherwise
+    override the correct one in this file and fail in a way that points at the
+    file, which is the one place that was correct.
     """
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env.worker')
     if not os.path.exists(path):
         return
+
+    def usable(key: str, value: str) -> bool:
+        if not value:
+            return False
+        # Supabase keys are JWTs: three dot-separated parts.
+        if key.endswith('_SERVICE_KEY') or key.endswith('_ANON_KEY'):
+            return value.count('.') == 2 and len(value) > 60
+        return True
+
     with open(path, encoding='utf-8') as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith('#') or '=' not in line:
                 continue
             key, value = line.split('=', 1)
-            os.environ.setdefault(key.strip(), value.strip())
+            key, value = key.strip(), value.strip()
+            current = os.environ.get(key)
+            if current is not None and usable(key, current):
+                continue
+            if current is not None:
+                print(f'[worker] ignoring malformed {key} from the environment; '
+                      'using .env.worker')
+            os.environ[key] = value
 
 
 _load_env_file()
