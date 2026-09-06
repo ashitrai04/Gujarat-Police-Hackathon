@@ -34,3 +34,8 @@ gujarat_shp
 
 # Packaged HLS archive lives in object storage, not the repo
 /feed_recordings_hls/
+
+# The detection pipeline is cloned at run time, not vendored
+/pipeline/sentinel-gujarat-pipeline/
+/pipeline/_capture/
+/pipeline/*.log
