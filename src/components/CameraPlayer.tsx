@@ -10,6 +10,14 @@ type Phase = 'connecting' | 'live' | 'replay' | 'error' | 'waiting' | 'archive';
 const RETRY_MS = [6000, 12000, 25000, 45000, 60000];
 
 /**
+ * How many times hls.js may try to recover a fatal error before the tile falls
+ * back to the archive. Measured against the live grid: a playlist that answers
+ * in 21s and then times out fails identically on every retry, so an unbounded
+ * count means the fallback never engages.
+ */
+const MAX_RECOVERIES = 2;
+
+/**
  * HLS is the only route a browser can take.
  *
  * The grid's other two endpoints are raw media on a bare public IP: RTSP on
@@ -88,6 +96,12 @@ export function CameraPlayer({
     const startHls = (url: string, archive = false) => {
       if (cancelled || !videoRef.current) return;
       destroyHls();
+      // hls.js can recover from a transient network fault in place, but a feed
+      // that is persistently slow or timing out produces the same fatal
+      // NETWORK_ERROR every time. Retrying that forever is how a tile sits
+      // black while a perfectly good archive sits unused, so recovery attempts
+      // are counted and the archive wins once they run out.
+      let recoveries = 0;
       hls = new Hls({
         maxBufferLength: 20,
         backBufferLength: 20,
@@ -127,27 +141,32 @@ export function CameraPlayer({
         el.play().catch(() => {});
       });
 
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (!data.fatal) return;
-        // Network hiccups on a live grid are expected; hls.js can recover from
-        // those in place. Only a hard media failure needs a full restart.
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls?.startLoad();
-          return;
-        }
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls?.recoverMediaError();
-          return;
-        }
+      const giveUp = () => {
         destroyHls();
-        // The live feed is gone. If this camera has an archived clip, play it
-        // rather than showing a dead tile — but only ever labelled as archive.
+        // Live is not coming back in a useful time. Play the archive rather
+        // than leaving a dead tile — always labelled, never passed off as live.
         const alt = archive ? null : fallbackUrl(camera.id);
         if (alt) {
           startHls(alt, true);
           return;
         }
         fail('Stream unavailable');
+      };
+
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal) return;
+
+        const recoverable =
+          data.type === Hls.ErrorTypes.NETWORK_ERROR ||
+          data.type === Hls.ErrorTypes.MEDIA_ERROR;
+
+        if (recoverable && recoveries < MAX_RECOVERIES) {
+          recoveries += 1;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls?.startLoad();
+          else hls?.recoverMediaError();
+          return;
+        }
+        giveUp();
       });
     };
 

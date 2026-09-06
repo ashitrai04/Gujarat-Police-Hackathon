@@ -22,7 +22,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import re
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
@@ -32,6 +34,50 @@ from sentinel_worker import Registry, analyse  # noqa: E402
 
 GRID_RTSP = 'rtsp://103.250.160.189:8554/stream/{id}'
 GRID_HLS = '{host}/{id}/index.m3u8'
+UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
+
+
+def grid_session(host: str) -> str | None:
+    """Sign in to the grid and return the session cookie.
+
+    Both transports need it now. RTSP on :8554 answers 401 without
+    credentials, and the HLS host has always been behind the access key. The
+    grid also requires the registered email alongside the key, and rejects a
+    password-only attempt with 200 and the login form rather than an error.
+    """
+    email = os.environ.get('SENTINEL_ACCESS_EMAIL', '')
+    key = os.environ.get('SENTINEL_ACCESS_KEY', '')
+    if not key:
+        print('[batch] SENTINEL_ACCESS_KEY unset; feeds will refuse the capture')
+        return None
+
+    import urllib.parse
+    body = urllib.parse.urlencode(
+        {'email': email, 'password': key} if email else {'password': key}
+    ).encode()
+    req = urllib.request.Request(
+        f'{host.rstrip("/")}/auth/login', data=body,
+        # Cloudflare serves a different response to a default Python agent.
+        headers={'User-Agent': UA,
+                 'Content-Type': 'application/x-www-form-urlencoded'})
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_a, **_kw):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        res = opener.open(req, timeout=45)
+        headers = res.headers
+    except urllib.error.HTTPError as e:
+        headers = e.headers
+    for line in headers.get_all('Set-Cookie') or []:
+        m = re.search(r'(?:^|;\s*)sentinel=([^;]+)', line)
+        if m:
+            return m.group(1)
+    print('[batch] grid sign-in failed — check SENTINEL_ACCESS_EMAIL and _KEY')
+    return None
 
 
 def registry_cameras() -> list[dict]:
@@ -60,10 +106,13 @@ def registry_cameras() -> list[dict]:
             for c in cams]
 
 
-def capture(url: str, seconds: int, dest: str) -> bool:
+def capture(url: str, seconds: int, dest: str, session: str | None = None) -> bool:
     import subprocess
     ff = os.environ.get('FFMPEG', 'ffmpeg')
-    cmd = [ff, '-hide_banner', '-loglevel', 'error']
+    cmd = [ff, '-hide_banner', '-loglevel', 'error', '-user_agent', UA]
+    if session:
+        # ffmpeg wants the trailing newline; without it the header is dropped.
+        cmd += ['-headers', 'Cookie: sentinel=' + session + chr(13) + chr(10)]
     if url.startswith('rtsp://'):
         # UDP drops packets across NAT and yields corrupt frames that look like
         # model faults. The grid's own guidance is to force TCP.
@@ -83,7 +132,7 @@ def capture(url: str, seconds: int, dest: str) -> bool:
 
 
 def run_once(cams: list[dict], seconds: int, tiled: bool, source: str,
-             hls_host: str) -> None:
+             hls_host: str, session: str | None) -> None:
     registry = Registry()
     tmp_dir = os.environ.get('SENTINEL_TMP', os.path.join(os.getcwd(), '_capture'))
     os.makedirs(tmp_dir, exist_ok=True)
@@ -96,7 +145,7 @@ def run_once(cams: list[dict], seconds: int, tiled: bool, source: str,
         print(f"[{cid}] {cam.get('name', '')}", flush=True)
 
         started = datetime.now(timezone.utc)
-        if not capture(url, seconds, dest):
+        if not capture(url, seconds, dest, session):
             continue
         try:
             result = analyse(dest, cid, tiled=tiled)
@@ -135,9 +184,11 @@ def main() -> None:
     if not cams:
         sys.exit('no matching cameras')
 
-    print(f'{len(cams)} cameras · {args.seconds}s each · source={args.source}\n')
+    session = grid_session(args.hls_host)
+    print(f'{len(cams)} cameras · {args.seconds}s each · source={args.source}\n' + (' | grid session ' + ('acquired' if session else 'MISSING')))
     while True:
-        run_once(cams, args.seconds, args.tiled, args.source, args.hls_host)
+        run_once(cams, args.seconds, args.tiled, args.source,
+                 args.hls_host, session)
         if not args.loop:
             break
         # The grid permits one session per address, so passes are spaced rather

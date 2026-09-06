@@ -214,6 +214,25 @@ def analyse(video: str, camera_id: str, *, tiled=False, frame_skip=2,
     import sentinel_pipeline as sp
 
     cfg = dict(sp.CONFIG)
+
+    # The team's night model (FINAL_NIGHT_MODEL.pt) is distributed as a Kaggle
+    # dataset, not in the repository, so it is often absent. Without it the
+    # pipeline raises on the first night camera and the whole pass dies. Degrade
+    # to the base detector instead: Indian-specific vehicle classes are lost,
+    # cars, bikes, buses and trucks are not, and plate reading is unaffected.
+    wanted_night = night_model or cfg.get('night_model')
+    if mode != 'day' and not (wanted_night and os.path.exists(
+            os.path.join(PIPELINE_DIR, wanted_night))) and not (
+            wanted_night and os.path.exists(wanted_night)):
+        if mode == 'night':
+            print(f'[worker] {wanted_night} not found — using the base detector')
+            mode = 'day'
+        else:
+            # 'auto' picks night from brightness; force day so it cannot select
+            # a model that is not there.
+            print(f'[worker] {wanted_night} not found — forcing day mode')
+            mode = 'day'
+
     cfg.update({
         'video': video,
         'camera_name': camera_id,
