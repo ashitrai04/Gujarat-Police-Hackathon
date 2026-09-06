@@ -41,9 +41,9 @@ def registry_cameras() -> list[dict]:
     if url and key:
         from supabase import create_client
         db = create_client(url, key)
-        rows = db.table('cameras').select(
-            'id,name,lat:st_y(geom::geometry),lng:st_x(geom::geometry)'
-        ).execute().data
+        # lat/lng are generated columns (migration 0003), not function calls:
+        # PostgREST cannot evaluate st_y() in a select list.
+        rows = db.table('cameras').select('id,name,lat,lng').execute().data
         if rows:
             return rows
 

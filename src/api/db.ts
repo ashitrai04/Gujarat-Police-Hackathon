@@ -60,15 +60,18 @@ export interface AuditRow {
 }
 
 /**
- * PostGIS stores a point; the UI wants two numbers. Postgres will not hand
- * back `geom` as lat/lng on its own, so reads go through this view and writes
- * convert on the way in.
+ * PostGIS stores a point; the UI wants two numbers.
+ *
+ * `lat` and `lng` are generated columns maintained by Postgres from `geom`
+ * (migration 0003), not function calls in this select. PostgREST does not
+ * evaluate functions in a select list — it reads `st_y(geom)` as an embedded
+ * relationship, looks for a foreign key to a table named `st_y`, and fails
+ * with PGRST200. `geom` remains authoritative for spatial queries.
  */
 export const CAMERA_SELECT =
   'id,name,department_id,domain,zone_id,district,cam_type,anpr_capable,' +
   'hls_url,rtsp_url,onvif_url,vendor,status,commissioned_on,last_serviced_on,' +
-  'maintenance_note,tags,source,created_at,updated_at,' +
-  'lat:st_y(geom::geometry),lng:st_x(geom::geometry)';
+  'maintenance_note,tags,source,created_at,updated_at,lat,lng';
 
 /** Point literal for a PostGIS insert, or null when a camera has no location. */
 export function toGeom(lat: number | null, lng: number | null): string | null {
