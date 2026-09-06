@@ -50,7 +50,10 @@ export interface Detection {
   confidence: number;
   /** ISO 8601 */
   timestamp: string;
+  /** Full frame, vehicle boxed and plate labelled — context and audit. */
   snapshotUrl: string;
+  /** Enlarged crop of the plate alone, for verifying the read by eye. */
+  plateCropUrl: string;
 }
 
 export type WatchlistCategory = 'stolen' | 'wanted' | 'missing' | 'suspect';

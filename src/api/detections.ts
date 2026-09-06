@@ -42,6 +42,7 @@ interface DetectionRow {
   colour: string | null;
   frames_voted: number | null;
   snapshot_url: string | null;
+  plate_crop_url: string | null;
   seen_at: string;
 }
 
@@ -59,11 +60,13 @@ function toDetection(r: DetectionRow): Detection {
       ?? (r.frames_voted ? Math.min(1, r.frames_voted / 10) : 0),
     timestamp: r.seen_at,
     snapshotUrl: r.snapshot_url ?? '',
+    plateCropUrl: r.plate_crop_url ?? '',
   };
 }
 
 const SELECT =
-  'id,camera_id,plate,plate_confidence,vehicle_type,colour,frames_voted,snapshot_url,seen_at';
+  'id,camera_id,plate,plate_confidence,vehicle_type,colour,frames_voted,' +
+  'snapshot_url,plate_crop_url,seen_at';
 
 /** Sightings, newest first. Every filter is applied in the database. */
 export async function listDetections(q: DetectionQuery = {}): Promise<Detection[]> {

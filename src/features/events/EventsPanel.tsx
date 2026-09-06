@@ -4,6 +4,8 @@ import { Download, FileText, Search } from 'lucide-react';
 import { api } from '@/api/client';
 import { Button, Card, Empty, SectionHeader, Spinner } from '@/components/ui';
 import { exportCsv, exportPdf } from './export';
+import { DetectionCard } from './DetectionCard';
+import { useStore } from '@/app/store';
 
 const RANGES = [
   { label: '1h', hours: 1 },
@@ -13,6 +15,8 @@ const RANGES = [
 ];
 
 export function EventsPanel() {
+  const setTrace = useStore((x) => x.setTrace);
+  const openPanel = useStore((x) => x.openPanel);
   const [plate, setPlate] = useState('');
   const [hours, setHours] = useState(12);
   const [cameraId, setCameraId] = useState('');
@@ -127,31 +131,24 @@ export function EventsPanel() {
             No detections match this search. Clear the plate filter or widen the time range.
           </Empty>
         ) : (
-          <div className="max-h-[46vh] overflow-auto px-3 pb-3">
-            <table className="w-full border-collapse text-[11px]">
-              <thead className="sticky top-0" style={{ background: 'var(--surface)' }}>
-                <tr style={{ color: 'var(--text-mute)' }}>
-                  <Th>Plate</Th>
-                  <Th>Camera</Th>
-                  <Th>Time</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i} className="border-t" style={{ borderColor: 'var(--line-soft)' }}>
-                    <td className="mono py-1.5 pr-2" style={{ color: 'var(--signal)' }}>
-                      {r.plate}
-                    </td>
-                    <td className="py-1.5 pr-2" style={{ color: 'var(--text)' }}>
-                      {r.camera}
-                    </td>
-                    <td className="mono py-1.5 whitespace-nowrap" style={{ color: 'var(--text-dim)' }}>
-                      {r.timestamp.split(', ')[1] ?? r.timestamp}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="max-h-[52vh] space-y-2 overflow-auto px-3 pb-3">
+            {/* Cards, not a table. A row of text asserts a plate; a card shows
+                the crop the read came from, which is what lets an operator
+                catch the character OCR got wrong. */}
+            {(data ?? []).map((d) => (
+              <DetectionCard
+                key={d.id}
+                detection={d}
+                cameraName={camName(d.cameraId)}
+                onTrace={(pl: string) => {
+                  // Jump straight from a sighting to the vehicle's journey:
+                  // the plate an operator just verified by eye is the one they
+                  // want to follow.
+                  void api.route(pl).then(setTrace);
+                  openPanel({ kind: 'trace' });
+                }}
+              />
+            ))}
           </div>
         )}
       </Card>
@@ -165,10 +162,3 @@ export function EventsPanel() {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="pb-1.5 text-left text-[10px] font-medium uppercase tracking-wider">
-      {children}
-    </th>
-  );
-}

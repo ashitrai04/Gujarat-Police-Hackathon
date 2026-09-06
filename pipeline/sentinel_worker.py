@@ -145,6 +145,68 @@ def use_tiled_detection() -> None:
 # Registry sink
 # ─────────────────────────────────────────────────────────────────────
 
+def upload_evidence(client, camera_id: str, plate: str, out_dir: str) -> dict:
+    """Put the frame and the plate crop in storage; return their URLs.
+
+    Two images, for two different jobs. The full frame is the accountability
+    record — which vehicle, which lane, what else was there. The plate crop is
+    what an operator actually reads to confirm the characters, because OCR on
+    this footage is right most of the time and not all of the time.
+
+    The crop is cut from the labelled frame rather than re-detected: it is the
+    same pixels the pipeline made its decision on, which is the point.
+    """
+    import cv2
+
+    urls = {'snapshot_url': None, 'plate_crop_url': None}
+    thumbs = os.path.join(out_dir, camera_id, 'thumbs')
+    if not os.path.isdir(thumbs):
+        return urls
+
+    match = next((f for f in os.listdir(thumbs) if f.startswith(plate + '_')), None)
+    if not match:
+        return urls
+    path = os.path.join(thumbs, match)
+    frame = cv2.imread(path)
+    if frame is None:
+        return urls
+
+    def put(name: str, image) -> str | None:
+        ok, buf = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        if not ok:
+            return None
+        key = f'{camera_id}/{plate}_{int(time.time())}_{name}.jpg'
+        try:
+            client.storage.from_('evidence').upload(
+                key, buf.tobytes(),
+                {'content-type': 'image/jpeg', 'upsert': 'true'})
+        except Exception as exc:  # noqa: BLE001
+            print(f'    evidence upload failed ({name}): {str(exc)[:80]}')
+            return None
+        return client.storage.from_('evidence').get_public_url(key)
+
+    urls['snapshot_url'] = put('frame', frame)
+
+    # The pipeline draws a green box round the vehicle and labels it. Finding
+    # that box gives the vehicle region without re-running detection; the plate
+    # sits in its lower half, which is where a rear plate is on every vehicle
+    # these cameras see.
+    import numpy as np
+    green = ((frame[:, :, 1] > 180) & (frame[:, :, 0] < 90) & (frame[:, :, 2] < 90))
+    ys, xs = np.where(green)
+    if len(xs) > 40:
+        x1, x2 = int(xs.min()), int(xs.max())
+        y1, y2 = int(ys.min()), int(ys.max())
+        h = y2 - y1
+        crop = frame[max(0, y1 + int(h * 0.45)):y2, x1:x2]
+        if crop.size:
+            big = cv2.resize(crop, None, fx=2.5, fy=2.5,
+                             interpolation=cv2.INTER_CUBIC)
+            urls['plate_crop_url'] = put('plate', big)
+
+    return urls
+
+
 class Registry:
     """Writes sightings into the same table the web application reads.
 
@@ -169,7 +231,7 @@ class Registry:
                   'detections will be printed, not stored')
 
     def write(self, camera_id: str, records: list[dict], lat=None, lng=None,
-              started_at: datetime | None = None) -> int:
+              started_at: datetime | None = None, out_dir: str | None = None) -> int:
         base = started_at or datetime.now(timezone.utc)
         rows = []
         for r in records:
@@ -183,9 +245,13 @@ class Registry:
             # batch finished.
             offset = r.get('time')
             seen = (base + timedelta(seconds=float(offset))) if offset is not None else base
+            evidence = (upload_evidence(self.client, camera_id, r['plate'], out_dir)
+                        if self.client and out_dir else
+                        {'snapshot_url': None, 'plate_crop_url': None})
             rows.append({
                 'camera_id': camera_id,
                 'plate': r['plate'],
+                **evidence,
                 'plate_confidence': None,
                 'vehicle_type': r.get('type'),
                 'frames_voted': int(reads) if reads is not None else None,
@@ -272,7 +338,8 @@ def main() -> None:
     print(f"\n[worker] {args.camera}: {v['total_tracked']} vehicles, "
           f"{v['plates_read']} plates, {result['elapsed_s']}s")
 
-    written = Registry().write(args.camera, v['plate_list'], args.lat, args.lng)
+    written = Registry().write(args.camera, v['plate_list'], args.lat, args.lng,
+                               out_dir=os.environ.get('SENTINEL_OUT', 'output'))
     print(f"[worker] {written} detections recorded")
 
 
