@@ -18,6 +18,16 @@ const RETRY_MS = [6000, 12000, 25000, 45000, 60000];
 const MAX_RECOVERIES = 2;
 
 /**
+ * How long a tile may sit on "Connecting…" before the archive takes over.
+ *
+ * Bounding the error path is not enough. A feed can hang without ever raising
+ * a fatal error — measured on the deployed proxy, the live playlist answers in
+ * 21s and then times out, and hls.js is still politely waiting. Playback either
+ * starts inside this window or it is not going to.
+ */
+const CONNECT_TIMEOUT_MS = 12_000;
+
+/**
  * HLS is the only route a browser can take.
  *
  * The grid's other two endpoints are raw media on a bare public IP: RTSP on
@@ -74,6 +84,8 @@ export function CameraPlayer({
     let hls: Hls | null = null;
     let cancelled = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const giveUpRef: { current: (() => void) | null } = { current: null };
     setPhase('connecting');
     setMsg('');
 
@@ -102,6 +114,14 @@ export function CameraPlayer({
       // black while a perfectly good archive sits unused, so recovery attempts
       // are counted and the archive wins once they run out.
       let recoveries = 0;
+      let started = false;
+
+      // A feed that never errors and never plays is the common case here, so
+      // the deadline is what actually triggers most fallbacks.
+      const deadline = setTimeout(() => {
+        if (!started && !cancelled) giveUpRef.current?.();
+      }, CONNECT_TIMEOUT_MS);
+      timers.push(deadline);
       hls = new Hls({
         maxBufferLength: 20,
         backBufferLength: 20,
@@ -138,10 +158,16 @@ export function CameraPlayer({
           el.loop = true;
           setPhase('archive');
         }
+        const onFirstFrame = () => {
+          started = true;
+          clearTimeout(deadline);
+        };
+        el.addEventListener('playing', onFirstFrame, { once: true });
         el.play().catch(() => {});
       });
 
       const giveUp = () => {
+        clearTimeout(deadline);
         destroyHls();
         // Live is not coming back in a useful time. Play the archive rather
         // than leaving a dead tile — always labelled, never passed off as live.
@@ -152,6 +178,8 @@ export function CameraPlayer({
         }
         fail('Stream unavailable');
       };
+
+      giveUpRef.current = giveUp;
 
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
@@ -198,6 +226,7 @@ export function CameraPlayer({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      timers.forEach(clearTimeout);
       if (retry) clearTimeout(retry);
       v.removeEventListener('playing', onPlaying);
       v.removeEventListener('canplay', onCanPlay);

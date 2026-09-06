@@ -35,6 +35,7 @@ export interface FallbackClip {
   note?: string;
 }
 
+/** null = not loaded (try anyway); an object = authoritative. */
 let index: Record<string, FallbackClip> | null = null;
 let loading: Promise<Record<string, FallbackClip>> | null = null;
 
@@ -47,25 +48,35 @@ export function loadFallbackIndex(): Promise<Record<string, FallbackClip>> {
   if (index) return Promise.resolve(index);
   if (!loading) {
     loading = fetch('/fallback-index.json')
-      .then((r) => (r.ok ? r.json() : {}))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((json: Record<string, FallbackClip>) => {
         index = json;
         return json;
       })
       .catch(() => {
-        // A missing index is not an error worth surfacing — it simply means no
-        // camera has a fallback.
-        index = {};
-        return index;
+        // The index is an optimisation, not a gate. It can be unreachable for
+        // reasons that say nothing about the archive — a preview deployment
+        // behind Vercel protection answers 302 for it, for instance — and
+        // treating that as "no camera has a fallback" disables the feature
+        // precisely when the deployment is already degraded.
+        index = null;
+        return {};
       });
   }
   return loading;
 }
 
-/** Playlist URL for a camera's archived clip, or null if there is none. */
+/**
+ * Playlist URL for a camera's archived clip, or null if there is none.
+ *
+ * When the index loaded, it is authoritative — a camera absent from it has no
+ * clip and there is no point trying. When it did not load, we try anyway: a
+ * 404 from the object store costs one request, while refusing to try leaves a
+ * black tile in front of an archive that exists.
+ */
 export function fallbackUrl(cameraId: string): string | null {
   if (!FALLBACK_CONFIGURED) return null;
-  if (index && !index[cameraId]) return null;
+  if (index !== null && !index[cameraId]) return null;
   return `${BASE}/${cameraId}/index.m3u8`;
 }
 

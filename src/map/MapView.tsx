@@ -232,6 +232,21 @@ export function MapView() {
     }
   }, [s.showBoundaries, s.showHeat, s.showGaps, s.pois, s.gis, ready, styleTick]);
 
+  /* ── Keep the canvas the size of its container ─────────────── */
+  useEffect(() => {
+    const host = ref.current;
+    const m = map.current;
+    if (!host || !m) return;
+    // Mapbox sizes its canvas once and does not watch the element. When the
+    // video-wall dock opens, resizes or closes, the container changes height
+    // and the canvas keeps the old one — which shows as black bands below the
+    // map. A window resize listener is not enough: the dock changes this
+    // element without the window changing at all.
+    const ro = new ResizeObserver(() => m.resize());
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [ready]);
+
   /* ── Globe + pitch ────────────────────────────────────────── */
   useEffect(() => {
     const m = map.current;
