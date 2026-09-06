@@ -1,54 +1,60 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ChevronRight, Compass, Pause, Play, X,
+  Camera, ChevronRight, Compass, Database, Map as MapIcon, Pause, Play,
+  Route as RouteIcon, ScanLine, Siren,
 } from 'lucide-react';
 import { useStore } from './store';
 import { api } from '@/api/client';
+import './GuidedTour.css';
 
 /**
  * Guided walkthrough of the platform.
  *
- * It drives the real interface rather than showing pictures of it: each step
- * moves a cursor to a real control, highlights it, and performs the action the
- * caption describes. Nothing is staged — a step that says a filter narrows the
- * estate applies that filter, and the count on screen changes because it did.
+ * It operates the real interface rather than showing pictures of one. A step
+ * that says a filter narrows the estate applies that filter, and the count on
+ * screen changes because it did. A scripted demo can claim anything; this can
+ * only claim what the running software does, so it stays honest as the app
+ * changes and breaks visibly when it does not.
  *
- * That constraint is the point. A scripted demo can claim anything; this one
- * can only claim what the running application actually does, so it stays
- * truthful as the app changes and breaks visibly when it does not.
+ * Each step runs as a sequence rather than all at once, because the parts
+ * depend on each other: the action fires first, the interface is given time to
+ * settle, only then is the target measured and spotlit, and the caption fades
+ * in last. Measuring a panel before it has opened finds nothing, or worse,
+ * finds where it used to be.
  */
 
-interface Step {
-  id: string;
-  /** `data-tour` hook, or a CSS selector. Null centres on the map. */
-  target: string | null;
-  title: string;
-  body: string;
-  /** How long this step holds before advancing, in ms. */
-  hold: number;
-  /** Performs the step's action against real application state. */
-  run?: (ctx: Ctx) => void | Promise<void>;
-}
-
 interface Ctx {
-  store: typeof useStore;
   set: ReturnType<typeof useStore.getState>;
 }
 
+interface Step {
+  id: string;
+  /** `data-tour` hook, or a CSS selector. Null centres with no spotlight. */
+  target: string | null;
+  title: string;
+  desc: string;
+  /** Hold after the caption appears, in ms. */
+  hold: number;
+  /** Extra settle time when this step opens a panel or dock. */
+  settle?: number;
+  run?: (ctx: Ctx) => void | Promise<void>;
+}
+
 const SEEN_KEY = 'sentinel-tour-seen';
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const STEPS: Step[] = [
   {
-    id: 'intro',
+    id: 'map',
     target: null,
-    title: 'Sentinel Command Center',
-    body:
-      'Twenty-six departments across Gujarat run their own cameras and none of them '
-      + 'talk to each other. This platform puts them on one map, reads number plates, '
-      + 'and follows a vehicle across cameras. <b>The map is the product</b> — every '
-      + 'feature below is worked from it.',
-    hold: 5200,
+    title: 'The map is the product',
+    desc:
+      'Twenty-six departments across Gujarat run their own cameras, and none of the '
+      + 'systems talk to each other. Sentinel puts all of them on one surface. Every '
+      + 'feature that follows is worked from this map — filtering, opening feeds, '
+      + 'following a vehicle.',
+    hold: 4800,
     run: ({ set }) => {
       set.closePanel();
       set.setDockOpen(false);
@@ -57,26 +63,27 @@ const STEPS: Step[] = [
   {
     id: 'layers',
     target: 'layers',
-    title: 'Cameras by department',
-    body:
-      'Every camera is a point of interest with a category, the way a maps app treats '
-      + 'fuel stations. Traffic, health, PDS, RTO and municipal estates each toggle '
-      + 'independently — so an operator sees the cameras they are responsible for, not '
-      + 'all thirty at once.',
+    title: 'Cameras by owning department',
+    desc:
+      'A camera is treated as a point of interest with a category, the way a maps app '
+      + 'treats fuel stations. Traffic, health, PDS, RTO and municipal estates each '
+      + 'toggle independently, so an operator sees the cameras they are responsible '
+      + 'for rather than all thirty at once.',
     hold: 4600,
   },
   {
     id: 'camtype',
     target: 'camtype',
     title: 'Only the cameras that can read a plate',
-    body:
-      'Department and capability are separate questions. An operator hunting a '
+    desc:
+      'Ownership and capability are separate questions. An operator hunting a '
       + 'registration wants the cameras <b>able to read one</b>, whoever owns them. '
-      + 'Watch the count: filtering to PTZ alone drops the estate from thirty to five.',
-    hold: 5000,
+      + 'Watch the counts as fixed cameras are switched off — the estate drops from '
+      + '<b>30 to 5</b>.',
+    hold: 5400,
     run: async ({ set }) => {
       set.toggleCamType('fixed');
-      await wait(2200);
+      await wait(2600);
       set.toggleCamType('fixed');
     },
   },
@@ -84,15 +91,15 @@ const STEPS: Step[] = [
     id: 'gis',
     target: 'gis',
     title: 'The geography a route is read against',
-    body:
-      'State boundary, districts, 11,079 national-highway segments and 12,404 major '
-      + 'roads, from the supplied GeoPackage. A traced vehicle follows these roads '
-      + 'rather than a straight line — a route that obviously did not happen '
-      + 'undermines every number beside it.',
-    hold: 5000,
+    desc:
+      'State boundary, districts, <b>11,079</b> national-highway segments and '
+      + '<b>12,404</b> major roads. A traced vehicle follows these roads rather than a '
+      + 'straight line — a route that obviously did not happen undermines every number '
+      + 'shown beside it.',
+    hold: 5200,
     run: async ({ set }) => {
       set.toggleGis('highways');
-      await wait(1600);
+      await wait(1500);
       set.toggleGis('state');
     },
   },
@@ -100,12 +107,12 @@ const STEPS: Step[] = [
     id: 'poi',
     target: 'poi',
     title: 'Where a vehicle can be intercepted',
-    body:
-      '126 police stations, 232 toll plazas and 741 railway stations from '
-      + 'OpenStreetMap. Toll plazas matter specifically: a vehicle leaving the state '
-      + 'passes one, which makes them the natural interception points on a traced '
-      + 'route.',
-    hold: 4600,
+    desc:
+      '<b>126</b> police stations, <b>232</b> toll plazas and <b>741</b> railway '
+      + 'stations from OpenStreetMap. Toll plazas earn their place specifically: a '
+      + 'vehicle leaving the state passes one, which makes them the natural '
+      + 'interception points on a traced route.',
+    hold: 4800,
     run: async ({ set }) => {
       set.togglePoi('police');
       await wait(1400);
@@ -116,24 +123,26 @@ const STEPS: Step[] = [
     id: 'registry',
     target: 'registry',
     title: 'Onboarding — three ways in',
-    body:
+    desc:
       'Departments hand over the spreadsheets they already keep, and no two name their '
-      + 'columns the same. The importer reads whatever headers it is given and maps '
-      + 'them itself — <b>9/9, 9/9 and 10/10 columns</b> across three deliberately '
-      + 'different formats, with every decision shown before anything is written.',
-    hold: 6000,
+      + 'columns alike. The importer reads whatever headers it is given and maps them '
+      + 'itself — <b>9/9, 9/9 and 10/10</b> columns across three deliberately different '
+      + 'formats, with every decision shown for confirmation before anything is saved.',
+    hold: 6200,
+    settle: 700,
     run: ({ set }) => set.openPanel({ kind: 'registry' }),
   },
   {
     id: 'wall',
     target: 'wall',
     title: 'The video wall',
-    body:
+    desc:
       'Cameras are added from map pins or by selecting an area: the map chooses, the '
       + 'wall shows. Tiles stay uniform rather than stretching, playable cameras sort '
       + 'first, and a feed that cannot be reached in twelve seconds falls back to '
       + 'recorded footage — labelled <b>RECORDED</b>, never passed off as live.',
-    hold: 6000,
+    hold: 6400,
+    settle: 900,
     run: async ({ set }) => {
       set.closePanel();
       const cams = await api.cameras();
@@ -144,13 +153,14 @@ const STEPS: Step[] = [
   {
     id: 'events',
     target: 'events',
-    title: 'Every sighting, with the evidence',
-    body:
+    title: 'Every sighting, with its evidence',
+    desc:
       'OCR on this footage is right most of the time, not all of the time. So each '
-      + 'reading shows the <b>plate crop</b> it was made from and the <b>full frame</b> '
-      + 'with the vehicle boxed — an operator confirms the characters by eye before '
+      + 'reading carries the <b>plate crop</b> it was made from and the <b>full frame</b> '
+      + 'with the vehicle boxed. An operator confirms the characters by eye before '
       + 'acting, and the frame is the accountability record.',
-    hold: 6200,
+    hold: 6400,
+    settle: 700,
     run: ({ set }) => {
       set.setDockOpen(false);
       set.openPanel({ kind: 'events' });
@@ -159,47 +169,50 @@ const STEPS: Step[] = [
   {
     id: 'trace',
     target: 'trace',
-    title: 'Following a vehicle',
-    body:
-      'A plate search returns every camera that saw it, in time order, drawn as a '
-      + 'route with a time slider. Sightings are timestamped, so map matching can '
-      + 'reject links a vehicle could not physically have made — the path follows real '
-      + 'roads, and where a gap cannot be bridged it says so rather than inventing one.',
-    hold: 5800,
+    title: 'Following a vehicle across cameras',
+    desc:
+      'A plate returns every camera that saw it, in time order, drawn as a route with '
+      + 'a playback slider. Because sightings are timestamped, map matching can reject '
+      + 'links a vehicle could not physically have made — and where a gap cannot be '
+      + 'bridged the straight line is kept rather than a plausible path invented.',
+    hold: 6000,
+    settle: 700,
     run: ({ set }) => set.openPanel({ kind: 'trace' }),
   },
   {
     id: 'watchlist',
     target: 'watchlist',
-    title: 'Watchlist and alerts',
-    body:
+    title: 'Watchlist and live alerts',
+    desc:
       'Stolen and wanted vehicles are matched at the moment a plate is read. On a hit '
       + 'the camera pin flashes, the map moves to it, and an alert card carries the '
       + 'snapshot and the reason. Acknowledgement records who acted and when.',
-    hold: 5200,
+    hold: 5400,
+    settle: 700,
     run: ({ set }) => set.openPanel({ kind: 'watchlist' }),
   },
   {
     id: 'health',
     target: 'health',
     title: 'Knowing what is actually up',
-    body:
+    desc:
       'The grid reports every camera as live, including the ones that are not, so '
       + 'availability is measured rather than trusted. Probing follows the wall rather '
       + 'than sweeping the estate — this grid permits one session per address and '
       + 'refuses bursts.',
-    hold: 5000,
+    hold: 5200,
+    settle: 700,
     run: ({ set }) => set.openPanel({ kind: 'health' }),
   },
   {
     id: 'end',
     target: null,
     title: 'That is the platform',
-    body:
-      'Registry and map, unified viewing, ANPR with evidence, vehicle tracing and '
-      + 'alerting — running against thirty live cameras. Press <b>Guide</b> in the top '
-      + 'bar to see this again.',
-    hold: 5200,
+    desc:
+      'Registry and GIS, unified viewing, ANPR with evidence, vehicle tracing and '
+      + 'alerting — running against thirty live cameras with a recorded fallback '
+      + 'behind them. Press <b>Guide</b> in the top bar to watch this again.',
+    hold: 5600,
     run: ({ set }) => {
       set.closePanel();
       set.setDockOpen(false);
@@ -207,19 +220,34 @@ const STEPS: Step[] = [
   },
 ];
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const HIGHLIGHTS = [
+  { icon: MapIcon, label: 'GIS map & layers' },
+  { icon: Database, label: 'Camera registry' },
+  { icon: Camera, label: 'Video wall' },
+  { icon: ScanLine, label: 'ANPR evidence' },
+  { icon: RouteIcon, label: 'Vehicle tracing' },
+  { icon: Siren, label: 'Watchlist alerts' },
+];
+
+type Phase = 'welcome' | 'running';
 
 export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [phase, setPhase] = useState<Phase>('welcome');
   const [i, setI] = useState(0);
   const [paused, setPaused] = useState(false);
-  const [rect, setRect] = useState<DOMRect | null>(null);
+  const [spot, setSpot] = useState<DOMRect | null>(null);
   const [cursor, setCursor] = useState({ x: 0, y: 0 });
-  const [pressed, setPressed] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pressing, setPressing] = useState(false);
+  const [ripple, setRipple] = useState<{ x: number; y: number; k: number } | null>(null);
+  const [captionShown, setCaptionShown] = useState(false);
+
+  const advance = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const iRef = useRef(i);
+  iRef.current = i;
   const step = STEPS[i];
 
   const finish = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
+    if (advance.current) clearTimeout(advance.current);
     try {
       localStorage.setItem(SEEN_KEY, '1');
     } catch {
@@ -228,53 +256,93 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
     onClose();
   }, [onClose]);
 
-  /* Locate the step's target, move the cursor to it, run its action. */
+  const next = useCallback(() => {
+    if (advance.current) clearTimeout(advance.current);
+    if (iRef.current < STEPS.length - 1) setI((n) => n + 1);
+    else finish();
+  }, [finish]);
+
+  /* Run one step as an ordered sequence. */
   useEffect(() => {
-    if (!open || !step) return;
+    if (!open || phase !== 'running' || !step) return;
     let live = true;
+    setCaptionShown(false);
 
-    const el = step.target
-      ? document.querySelector<HTMLElement>(
-          step.target.startsWith('.') || step.target.startsWith('#')
-            ? step.target
-            : `[data-tour="${step.target}"]`,
-        )
-      : null;
+    const centre = () => ({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 
-    const r = el?.getBoundingClientRect() ?? null;
-    setRect(r);
-    setCursor(
-      r
-        ? { x: r.left + r.width / 2, y: r.top + r.height / 2 }
-        : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
-    );
-
-    // The press animation lands after the cursor has travelled, so the action
-    // reads as caused by the click rather than coincident with it.
-    const press = setTimeout(() => {
+    (async () => {
+      // 1. Perform the action first, so the interface is in the state the
+      //    caption is about to describe.
+      await step.run?.({ set: useStore.getState() });
       if (!live) return;
-      setPressed(true);
-      setTimeout(() => live && setPressed(false), 260);
-      void step.run?.({ store: useStore, set: useStore.getState() });
-    }, 620);
+
+      // 2. Let it settle. A panel measured while opening reports the wrong box.
+      await wait(step.settle ?? 260);
+      if (!live) return;
+
+      // 3. Find and measure the target.
+      const el = step.target
+        ? document.querySelector<HTMLElement>(
+            /^[.#]/.test(step.target) ? step.target : `[data-tour="${step.target}"]`,
+          )
+        : null;
+
+      if (el) {
+        const r = el.getBoundingClientRect();
+        if (r.top < 0 || r.bottom > window.innerHeight) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await wait(420);
+          if (!live) return;
+        }
+        const box = el.getBoundingClientRect();
+        setSpot(box);
+        setCursor({ x: box.left + box.width / 2, y: box.top + box.height / 2 });
+      } else {
+        setSpot(null);
+        setCursor(centre());
+      }
+
+      // 4. Let the cursor travel, then click. The press lands after the move,
+      //    so the highlight reads as caused by it.
+      await wait(640);
+      if (!live) return;
+      setPressing(true);
+      setRipple({ ...(el ? { x: cursorXOf(el), y: cursorYOf(el) } : centre()), k: Date.now() });
+      await wait(200);
+      if (!live) return;
+      setPressing(false);
+
+      // 5. Caption last.
+      setCaptionShown(true);
+
+      if (!paused) {
+        advance.current = setTimeout(() => {
+          if (live && iRef.current === i) next();
+        }, step.hold);
+      }
+    })();
 
     return () => {
       live = false;
-      clearTimeout(press);
+      if (advance.current) clearTimeout(advance.current);
     };
-  }, [open, i, step]);
+    // `paused` is handled separately so toggling it does not replay the step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, phase, i, step, next]);
 
-  /* Advance, unless held. */
+  /* Pausing stops the clock; resuming gives the remainder of the step. */
   useEffect(() => {
-    if (!open || paused || !step) return;
-    timer.current = setTimeout(() => {
-      if (i < STEPS.length - 1) setI((n) => n + 1);
-      else finish();
-    }, step.hold);
+    if (!open || phase !== 'running') return;
+    if (paused) {
+      if (advance.current) clearTimeout(advance.current);
+      return;
+    }
+    if (!captionShown || !step) return;
+    advance.current = setTimeout(() => next(), step.hold / 2);
     return () => {
-      if (timer.current) clearTimeout(timer.current);
+      if (advance.current) clearTimeout(advance.current);
     };
-  }, [open, i, paused, step, finish]);
+  }, [paused, open, phase, captionShown, step, next]);
 
   useEffect(() => {
     if (!open) return;
@@ -284,138 +352,121 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
         e.preventDefault();
         setPaused((p) => !p);
       }
-      if (e.key === 'ArrowRight' && i < STEPS.length - 1) setI((n) => n + 1);
+      if (e.key === 'ArrowRight') next();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, i, finish]);
+  }, [open, finish, next]);
 
   useEffect(() => {
-    if (open) setI(0);
+    if (open) {
+      setPhase('welcome');
+      setI(0);
+      setPaused(false);
+      setSpot(null);
+    }
   }, [open]);
 
-  if (!open || !step) return null;
+  if (!open) return null;
 
-  // Keep the caption beside the highlight, never off-screen and never on top
-  // of the thing it is describing.
-  const W = 380;
-  const H = 208;
-  const M = 16;
-  let cx = rect ? rect.left : (window.innerWidth - W) / 2;
-  let cy = rect ? rect.bottom + M : window.innerHeight / 2 + 40;
-  if (rect && cy + H > window.innerHeight - M) cy = Math.max(M, rect.top - H - M);
-  cx = Math.min(Math.max(M, cx), window.innerWidth - W - M);
+  if (phase === 'welcome') {
+    return createPortal(
+      <div className="tour-welcome">
+        <div className="tour-welcome-card">
+          <div className="tour-welcome-icon"><Compass size={26} /></div>
+          <div className="tour-welcome-title">Platform walkthrough</div>
+          <p className="tour-welcome-sub">
+            A guided pass over the working system — camera registry, GIS layers,
+            the video wall, plate reading with evidence, and vehicle tracing.
+            It drives the real interface, so everything you see it claim, it does.
+          </p>
+          <div className="tour-welcome-grid">
+            {HIGHLIGHTS.map(({ icon: Icon, label }) => (
+              <div key={label} className="tour-welcome-item">
+                <Icon size={13} /> {label}
+              </div>
+            ))}
+          </div>
+          <div className="tour-welcome-actions">
+            <button className="tour-btn tour-btn-skip" onClick={finish}>Skip</button>
+            <button className="tour-btn tour-btn-start" onClick={() => setPhase('running')}>
+              <Play size={14} /> Start walkthrough
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  const pos = captionPosition(spot);
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-0 z-[200]">
-      {/* Dim everything except the target. Four panels rather than an overlay
-          with a hole, so the highlighted control stays fully visible. */}
-      {rect ? (
-        <>
-          <Shade style={{ inset: `0 0 auto 0`, height: Math.max(0, rect.top - 6) }} />
-          <Shade style={{ inset: `${rect.bottom + 6}px 0 0 0` }} />
-          <Shade style={{ top: rect.top - 6, left: 0, width: Math.max(0, rect.left - 6), height: rect.height + 12 }} />
-          <Shade style={{ top: rect.top - 6, left: rect.right + 6, right: 0, height: rect.height + 12 }} />
-          <div
-            className="absolute rounded-[8px] transition-all duration-500"
-            style={{
-              top: rect.top - 6,
-              left: rect.left - 6,
-              width: rect.width + 12,
-              height: rect.height + 12,
-              border: '2px solid var(--signal)',
-              boxShadow: '0 0 0 3px var(--signal-glow), 0 0 26px var(--signal-glow)',
-            }}
-          />
-        </>
-      ) : (
-        <Shade style={{ inset: 0 }} />
-      )}
-
-      {/* The cursor. Its travel is what makes a step read as an action. */}
-      <div
-        className="absolute transition-all duration-[600ms] ease-out"
-        style={{
-          left: cursor.x, top: cursor.y,
-          transform: `translate(-50%,-50%) scale(${pressed ? 0.82 : 1})`,
-        }}
-      >
+    <div className="tour-root">
+      {spot ? (
         <div
-          className="rounded-full"
+          className="tour-spotlight"
           style={{
-            width: 18, height: 18,
-            background: 'var(--signal)',
-            boxShadow: '0 0 0 6px var(--signal-dim), 0 0 18px var(--signal-glow)',
+            top: spot.top - 7, left: spot.left - 7,
+            width: spot.width + 14, height: spot.height + 14,
           }}
         />
+      ) : (
+        <div className="tour-backdrop" />
+      )}
+
+      {ripple && (
+        <span
+          key={ripple.k}
+          className="tour-ripple"
+          style={{ left: ripple.x, top: ripple.y }}
+          onAnimationEnd={() => setRipple(null)}
+        />
+      )}
+
+      <div
+        className={`tour-cursor${pressing ? ' pressing' : ''}`}
+        style={{ left: cursor.x, top: cursor.y }}
+      >
+        <Pointer />
       </div>
 
-      {/* Caption */}
       <div
-        className="pointer-events-auto absolute overflow-hidden rounded-[10px] transition-all duration-500"
-        style={{
-          left: cx, top: cy, width: W,
-          background: 'var(--surface)',
-          border: '1px solid var(--line)',
-          boxShadow: 'var(--sh-lg)',
-        }}
+        className={`tour-caption${captionShown ? ' enter' : ''}`}
+        style={{ left: pos.x, top: pos.y, opacity: captionShown ? 1 : 0 }}
       >
-        <div className="h-[3px]" style={{ background: 'var(--line)' }}>
+        <div className="tour-progress">
           <div
-            className="h-full transition-all duration-300"
-            style={{
-              width: `${((i + 1) / STEPS.length) * 100}%`,
-              background: 'var(--signal)',
-            }}
+            className="tour-progress-fill"
+            style={{ width: `${((i + 1) / STEPS.length) * 100}%` }}
           />
         </div>
 
-        <div className="p-3.5">
-          <div className="mb-1.5 flex items-center gap-2">
-            <Compass size={13} style={{ color: 'var(--signal)' }} />
-            <span
-              className="mono text-[10px] font-bold uppercase tracking-[.1em]"
-              style={{ color: 'var(--signal)' }}
-            >
-              Guided tour · {i + 1} of {STEPS.length}
-            </span>
+        <div className="tour-caption-body">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <span className="tour-step-badge">{i + 1}</span>
+            <span className="tour-caption-title">{step.title}</span>
           </div>
-
-          <h3
-            className="display mb-1.5 text-[15px] font-semibold"
-            style={{ color: 'var(--text)' }}
-          >
-            {step.title}
-          </h3>
           <p
-            className="text-[12.5px] leading-relaxed"
-            style={{ color: 'var(--text-dim)' }}
-            dangerouslySetInnerHTML={{ __html: step.body }}
+            className="tour-caption-desc"
+            dangerouslySetInnerHTML={{ __html: step.desc }}
           />
 
-          <div className="mt-3 flex items-center gap-1.5">
-            <button
-              onClick={() => setPaused((p) => !p)}
-              className="flex items-center gap-1 rounded-[5px] px-2 py-1 text-[11.5px]"
-              style={{ border: '1px solid var(--line)', color: 'var(--text-dim)' }}
-            >
+          <div className="tour-caption-footer">
+            <button className="tour-mini" onClick={() => setPaused((p) => !p)}>
               {paused ? <Play size={11} /> : <Pause size={11} />}
               {paused ? 'Resume' : 'Pause'}
             </button>
-            <button
-              onClick={() => (i < STEPS.length - 1 ? setI((n) => n + 1) : finish())}
-              className="flex items-center gap-1 rounded-[5px] px-2 py-1 text-[11.5px]"
-              style={{ border: '1px solid var(--line)', color: 'var(--text-dim)' }}
+            <span
+              className="mono"
+              style={{ fontSize: 10.5, color: 'var(--text-mute)' }}
             >
-              Next <ChevronRight size={11} />
-            </button>
-            <div className="flex-1" />
-            <button
-              onClick={finish}
-              className="flex items-center gap-1 rounded-[5px] px-2 py-1 text-[11.5px]"
-              style={{ color: 'var(--text-mute)' }}
-            >
-              <X size={11} /> Skip
+              {i + 1} / {STEPS.length}
+            </span>
+            <div style={{ flex: 1 }} />
+            <button className="tour-mini" onClick={finish}>Skip</button>
+            <button className="tour-mini tour-mini-primary" onClick={next}>
+              {i === STEPS.length - 1 ? 'Finish' : 'Next'} <ChevronRight size={11} />
             </button>
           </div>
         </div>
@@ -425,13 +476,48 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
   );
 }
 
-function Shade({ style }: { style: React.CSSProperties }) {
+/** An arrow, not a dot — it reads as a pointer being moved by someone. */
+function Pointer() {
   return (
-    <div
-      className="absolute transition-all duration-500"
-      style={{ background: 'rgba(4,8,15,.72)', ...style }}
-    />
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" aria-hidden>
+      <path
+        d="M5.65 2.92L19.08 12.03c.48.32.28 1.07-.29 1.1l-6.31.33-2.68 5.77c-.24.52-1 .44-1.12-.11L5.05 3.61c-.11-.49.23-.94.6-.69Z"
+        fill="var(--signal)"
+        stroke="#04201C"
+        strokeWidth="0.9"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
+}
+
+const cursorXOf = (el: HTMLElement) => {
+  const r = el.getBoundingClientRect();
+  return r.left + r.width / 2;
+};
+const cursorYOf = (el: HTMLElement) => {
+  const r = el.getBoundingClientRect();
+  return r.top + r.height / 2;
+};
+
+/** Beside the highlight, never off-screen, never covering what it describes. */
+function captionPosition(rect: DOMRect | null) {
+  const W = 384;
+  const H = 216;
+  const M = 16;
+  if (!rect) {
+    return { x: (window.innerWidth - W) / 2, y: window.innerHeight / 2 + 30 };
+  }
+  let y = rect.bottom + M;
+  if (y + H > window.innerHeight - M) y = rect.top - H - M;
+  if (y < M) y = Math.max(M, (window.innerHeight - H) / 2);
+
+  // Prefer sitting to the right of a narrow target such as the left rail,
+  // rather than on top of it.
+  let x = rect.width < 320 ? rect.right + M : rect.left;
+  if (x + W > window.innerWidth - M) x = Math.max(M, rect.left - W - M);
+  if (x < M) x = M;
+  return { x, y };
 }
 
 /** True the first time this browser opens the app. */

@@ -1,0 +1,273 @@
+/* Guided tour — overlay, cursor, spotlight, caption.
+   Kept in CSS rather than inline styles because every piece of it animates,
+   and keyframes cannot live in a style attribute. */
+
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+}
+
+/* ── Welcome ─────────────────────────────────────────────────────── */
+
+.tour-welcome {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 15, 0.82);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+  animation: tour-fade 0.35s ease both;
+}
+
+.tour-welcome-card {
+  width: min(520px, 100%);
+  border-radius: 12px;
+  padding: 26px 26px 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-lg);
+  animation: tour-rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.tour-welcome-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  color: var(--signal);
+  background: var(--signal-dim);
+  border: 1px solid var(--signal);
+}
+
+.tour-welcome-title {
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin-bottom: 7px;
+}
+
+.tour-welcome-sub {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin-bottom: 18px;
+}
+
+.tour-welcome-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 20px;
+}
+@media (min-width: 520px) {
+  .tour-welcome-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.tour-welcome-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.tour-welcome-item svg { color: var(--signal); flex: 0 0 auto; }
+
+.tour-welcome-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.tour-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 7px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.15s, background 0.15s;
+}
+.tour-btn-skip {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text-mute);
+}
+.tour-btn-skip:hover { background: var(--surface-2); }
+.tour-btn-start {
+  background: var(--signal);
+  border: 1px solid var(--signal);
+  color: #04201c;
+}
+.tour-btn-start:hover { filter: brightness(1.1); }
+
+/* ── Spotlight ───────────────────────────────────────────────────── */
+
+/* One element, not four panels: an enormous spread shadow dims everything
+   outside the ring, so the highlighted control keeps its true colours while
+   the rest of the interface recedes. It also animates as a single box, which
+   is what makes the spotlight glide between steps instead of jumping. */
+.tour-spotlight {
+  position: absolute;
+  border-radius: 9px;
+  border: 2px solid var(--signal);
+  box-shadow:
+    0 0 0 4px var(--signal-glow),
+    0 0 24px var(--signal-glow),
+    0 0 0 9999px rgba(4, 8, 15, 0.74);
+  transition: top 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+              left 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+              width 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+              height 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tour-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 15, 0.74);
+  animation: tour-fade 0.4s ease both;
+}
+
+/* ── Cursor ──────────────────────────────────────────────────────── */
+
+.tour-cursor {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  margin: -3px 0 0 -3px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+  transition: left 0.62s cubic-bezier(0.22, 1, 0.36, 1),
+              top 0.62s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.12s ease;
+  z-index: 2;
+}
+.tour-cursor.pressing { transform: scale(0.8); }
+
+.tour-ripple {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid var(--signal);
+  animation: tour-ripple 0.65s ease-out forwards;
+  z-index: 1;
+}
+
+/* ── Caption ─────────────────────────────────────────────────────── */
+
+.tour-caption {
+  position: absolute;
+  width: 384px;
+  max-width: calc(100vw - 32px);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-lg);
+  pointer-events: auto;
+  transition: left 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+              top 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 3;
+}
+.tour-caption.enter { animation: tour-rise 0.3s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+.tour-progress { height: 3px; background: var(--line); }
+.tour-progress-fill {
+  height: 100%;
+  background: var(--signal);
+  transition: width 0.4s ease;
+}
+
+.tour-caption-body { padding: 14px 15px 12px; }
+
+.tour-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--signal);
+  color: #04201c;
+  flex: 0 0 auto;
+}
+
+.tour-caption-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.tour-caption-desc {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.62;
+  color: var(--text-dim);
+}
+.tour-caption-desc b { color: var(--text); font-weight: 600; }
+
+.tour-caption-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 13px;
+}
+
+.tour-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 11.5px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  transition: background 0.15s;
+}
+.tour-mini:hover { background: var(--surface-2); }
+.tour-mini-primary {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: #04201c;
+  font-weight: 500;
+}
+.tour-mini-primary:hover { filter: brightness(1.1); }
+
+/* ── Keyframes ───────────────────────────────────────────────────── */
+
+@keyframes tour-fade { from { opacity: 0; } to { opacity: 1; } }
+
+@keyframes tour-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes tour-ripple {
+  from { opacity: 0.9; transform: scale(1); }
+  to   { opacity: 0; transform: scale(4.2); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-spotlight, .tour-cursor, .tour-caption { transition: none; }
+  .tour-welcome, .tour-welcome-card, .tour-caption.enter, .tour-backdrop {
+    animation: none;
+  }
+  .tour-ripple { display: none; }
+}
