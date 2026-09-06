@@ -22,10 +22,25 @@ async function signIn(): Promise<string> {
     loadEnv('development', dirname, '').SENTINEL_ACCESS_KEY ||
     ''
   if (!key) throw new Error('SENTINEL_ACCESS_KEY missing from .env')
+  // The grid now requires email as well as the access key; a password-only
+  // POST is answered 200 with the form re-rendered, which reads as a broken
+  // feed rather than a rejected login.
+  const email =
+    process.env.SENTINEL_ACCESS_EMAIL ||
+    loadEnv('development', dirname, '').SENTINEL_ACCESS_EMAIL ||
+    ''
   const res = await fetch(`${SENTINEL_ORIGIN}/auth/login`, {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ password: key }).toString(),
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      // Cloudflare serves a different response to a default Node user-agent.
+      'user-agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    },
+    body: new URLSearchParams(
+      email ? { email, password: key } : { password: key },
+    ).toString(),
     redirect: 'manual',
   })
   const lines =

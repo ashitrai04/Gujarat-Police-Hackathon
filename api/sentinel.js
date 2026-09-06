@@ -37,6 +37,10 @@ export const config = { runtime: 'edge' };
 
 const UPSTREAM = 'https://cctv.corp8.cloud';
 const ACCESS_KEY = process.env.SENTINEL_ACCESS_KEY || '';
+// The grid's sign-in form changed from password-only to email + password, and
+// a password-only POST is now answered with 200 and the login form re-rendered
+// rather than an error — so a stale client looks like a broken feed.
+const ACCESS_EMAIL = process.env.SENTINEL_ACCESS_EMAIL || '';
 const PREFIX = '/sentinel';
 
 const UA =
@@ -78,7 +82,10 @@ async function signIn() {
       'content-type': 'application/x-www-form-urlencoded',
       'user-agent': UA,
     },
-    body: new URLSearchParams({ password: ACCESS_KEY }).toString(),
+    body: new URLSearchParams(
+      ACCESS_EMAIL ? { email: ACCESS_EMAIL, password: ACCESS_KEY }
+                   : { password: ACCESS_KEY },
+    ).toString(),
     redirect: 'manual',
   });
 
@@ -90,8 +97,12 @@ async function signIn() {
     const m = /(?:^|;\s*)sentinel=([^;]+)/.exec(line || '');
     if (m) return `sentinel=${m[1]}`;
   }
-  // A wrong key re-renders the login form with 200 rather than erroring.
-  throw new Error(`sign-in failed (${res.status}) — check SENTINEL_ACCESS_KEY`);
+  // A rejected sign-in re-renders the form with 200 rather than erroring, so
+  // the absence of a cookie is the only reliable signal of failure.
+  throw new Error(
+    `sign-in failed (${res.status}) — check SENTINEL_ACCESS_KEY and ` +
+    'SENTINEL_ACCESS_EMAIL; the grid now requires both',
+  );
 }
 
 async function cookie(force = false) {
