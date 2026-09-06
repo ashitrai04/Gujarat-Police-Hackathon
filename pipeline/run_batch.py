@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Importing the worker also loads .env.worker, so both entry points share
+# one place for credentials.
 from sentinel_worker import Registry, analyse  # noqa: E402
 
 GRID_RTSP = 'rtsp://103.250.160.189:8554/stream/{id}'

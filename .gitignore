@@ -39,3 +39,6 @@ gujarat_shp
 /pipeline/sentinel-gujarat-pipeline/
 /pipeline/_capture/
 /pipeline/*.log
+
+# Worker credentials — service-role key, never commit
+/pipeline/.env.worker

@@ -45,7 +45,34 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-PIPELINE_DIR = os.environ.get('SENTINEL_PIPELINE_DIR', './sentinel-gujarat-pipeline')
+def _load_env_file() -> None:
+    """Read .env.worker beside this script into the environment.
+
+    Credentials pasted into a shell each run are a reliable source of failure:
+    a truncated key produces `Invalid Compact JWS` and a missing one produces
+    a 401, and both arrive hundreds of frames into a job that has already done
+    all its expensive work. Setting them once in a file removes that entirely.
+
+    Values already exported win, so CI or a one-off override still works.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env.worker')
+    if not os.path.exists(path):
+        return
+    with open(path, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+_load_env_file()
+
+PIPELINE_DIR = os.environ.get(
+    'SENTINEL_PIPELINE_DIR',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 'sentinel-gujarat-pipeline'))
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -221,6 +248,12 @@ class Registry:
         self.enabled = bool(url and key)
         self.client = None
         if self.enabled:
+            # A malformed key is worth catching now, not after several minutes
+            # of inference: a JWT has three dot-separated parts.
+            if key.count('.') != 2:
+                raise SystemExit(
+                    'SUPABASE_SERVICE_KEY is not a JWT — it looks truncated or '
+                    'is still a placeholder. Set it in pipeline/.env.worker.')
             from supabase import create_client
             # The service key is used deliberately: this worker is a trusted
             # server-side process, and row-level security would otherwise
