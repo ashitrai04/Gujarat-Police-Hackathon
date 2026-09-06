@@ -167,7 +167,7 @@ export function LeftRail() {
 
       {/* Camera domains */}
       <SectionHeader>Camera layers</SectionHeader>
-      <div className="px-1.5 pb-1">
+      <div data-tour="layers" className="px-1.5 pb-1">
         {ALL_DOMAINS.map((d) => (
           <ToggleRow
             key={d}
@@ -191,7 +191,7 @@ export function LeftRail() {
       {/* Camera capability, separate from department: an operator hunting a
           plate wants the cameras that can read one, whoever owns them. */}
       <SectionHeader>Camera type</SectionHeader>
-      <div className="px-1.5 pb-1">
+      <div data-tour="camtype" className="px-1.5 pb-1">
         {ALL_CAM_TYPES.map((t) => (
           <ToggleRow
             key={t}
@@ -281,7 +281,7 @@ export function LeftRail() {
 
       {/* Gujarat GIS — the reference geography a vehicle route is read against */}
       <SectionHeader>Gujarat GIS</SectionHeader>
-      <div className="px-1.5 pb-1">
+      <div data-tour="gis" className="px-1.5 pb-1">
         {GIS_META.map((g) => (
           <ToggleRow
             key={g.key}
@@ -309,7 +309,7 @@ export function LeftRail() {
 
       {/* Reference POIs */}
       <SectionHeader>Reference layers</SectionHeader>
-      <div className="px-1.5 pb-1">
+      <div data-tour="poi" className="px-1.5 pb-1">
         {(Object.keys(POI_META) as PoiLayer[]).map((k) => {
           const M = POI_META[k];
           return (
@@ -333,11 +333,11 @@ export function LeftRail() {
       {/* Tools */}
       <SectionHeader>Tools</SectionHeader>
       <div className="flex flex-col gap-1 px-2.5 pb-3">
-        <RailButton icon={RouteIcon} label="Trace a vehicle" onClick={() => s.openPanel({ kind: 'trace' })} />
-        <RailButton icon={Siren} label="Watchlist" onClick={() => s.openPanel({ kind: 'watchlist' })} />
-        <RailButton icon={Search} label="Event search & report" onClick={() => s.openPanel({ kind: 'events' })} />
-        <RailButton icon={Radio} label="Camera health" onClick={() => s.openPanel({ kind: 'health' })} />
-        <RailButton icon={DatabaseIcon} label="Registry & onboarding" onClick={() => s.openPanel({ kind: 'registry' })} />
+        <RailButton icon={RouteIcon} data-tour="trace" label="Trace a vehicle" onClick={() => s.openPanel({ kind: 'trace' })} />
+        <RailButton icon={Siren} data-tour="watchlist" label="Watchlist" onClick={() => s.openPanel({ kind: 'watchlist' })} />
+        <RailButton icon={Search} data-tour="events" label="Event search & report" onClick={() => s.openPanel({ kind: 'events' })} />
+        <RailButton icon={Radio} data-tour="health" label="Camera health" onClick={() => s.openPanel({ kind: 'health' })} />
+        <RailButton icon={DatabaseIcon} data-tour="registry" label="Registry & onboarding" onClick={() => s.openPanel({ kind: 'registry' })} />
       </div>
 
       <div className="px-3 pb-3">
@@ -354,13 +354,16 @@ function RailButton({
   icon: Icon,
   label,
   onClick,
+  'data-tour': tour,
 }: {
   icon: typeof Search;
   label: string;
   onClick: () => void;
+  /** Stable hook for the guided tour to aim at; class names are not. */
+  'data-tour'?: string;
 }) {
   return (
-    <Button onClick={onClick} className="w-full !justify-start">
+    <Button onClick={onClick} data-tour={tour} className="w-full !justify-start">
       <Icon size={13} />
       {label}
     </Button>

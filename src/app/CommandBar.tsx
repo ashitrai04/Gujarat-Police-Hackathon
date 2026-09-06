@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
-  Bell, Box, Globe, Layers, ListPlus, MonitorPlay, Mountain, Search, ShieldCheck, X,
+  Bell, Box, Compass, Globe, Layers, ListPlus, MonitorPlay, Mountain, Search,
+  ShieldCheck, X,
 } from 'lucide-react';
 import { BASE_STYLES, useStore, type BaseStyle } from './store';
 import { useBreakpoint } from './useBreakpoint';
@@ -154,6 +155,7 @@ export function CommandBar() {
       {/* Opens the camera grid as its own full screen. The small bottom dock
           stays available via the chevron inside that screen. */}
       <Button
+        data-tour="wall"
         onClick={() => {
           s.setDockOpen(true);
           s.toggleWallFullscreen();
@@ -173,6 +175,15 @@ export function CommandBar() {
           {ANPR_CONNECTED ? 'ANPR live' : 'ANPR offline'}
         </Pill>
       )}
+
+      {/* A demo that drives the real interface, not a video of it. */}
+      <Button
+        onClick={() => window.dispatchEvent(new Event('sentinel:tour'))}
+        title="Guided walkthrough of the platform"
+      >
+        <Compass size={13} />
+        {!tight && 'Guide'}
+      </Button>
 
       {/* Real identity, from Supabase. The role switcher below it is a demo
           convenience for showing different operator views; this is the one

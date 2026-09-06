@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, subscribeAlerts } from '@/api/client';
 import { MapView } from '@/map/MapView';
+import { GuidedTour, tourUnseen } from './GuidedTour';
 import { CommandBar } from './CommandBar';
 import { LeftRail } from './LeftRail';
 import { RightPanel } from './RightPanel';
@@ -61,6 +62,20 @@ export function App() {
     });
   }, [pushAlert, openPanel]);
 
+  /* The tour offers itself once, after the map has settled — launching it
+     over a half-loaded interface would demonstrate the loading state. */
+  const [tourOpen, setTourOpen] = useState(false);
+  useEffect(() => {
+    if (!tourUnseen()) return;
+    const t = setTimeout(() => setTourOpen(true), 2600);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    const open = () => setTourOpen(true);
+    window.addEventListener('sentinel:tour', open);
+    return () => window.removeEventListener('sentinel:tour', open);
+  }, []);
+
   // The panel is ALWAYS an overlay anchored to the map's right edge. Giving it
   // its own flex column could make the row exceed the viewport at certain
   // width/zoom combinations, pushing it off-screen entirely.
@@ -98,6 +113,9 @@ export function App() {
 
       <VideoWall />
       {!dockOpen && <DockHandle />}
+
+      {/* Above every panel and the dock: the tour highlights them in turn. */}
+      <GuidedTour open={tourOpen} onClose={() => setTourOpen(false)} />
       {pickerOpen && <CameraPicker onClose={() => setPickerOpen(false)} />}
       <PinMenu />
       <SoloCamera />
