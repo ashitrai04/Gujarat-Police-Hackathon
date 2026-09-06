@@ -69,6 +69,23 @@ export function VideoWall() {
   }, [dockOpen, wallFullscreen]);
 
   const { data: health } = useStreamHealth();
+  const setWall = useStore((x) => x.setWall);
+
+  /**
+   * Drop wall entries that no camera answers to.
+   *
+   * A persisted wall outlives the registry it was built against, and the grid
+   * has already renumbered twice. When the identifiers stop matching, the
+   * header counts cameras the wall cannot render — it reported sixteen while
+   * showing none. Pruning keeps the count honest and stops a stale layout
+   * quietly breaking the wall.
+   */
+  useEffect(() => {
+    if (!cams?.length || !wallCameraIds.length) return;
+    const known = new Set(cams.map((c) => c.id));
+    const live = wallCameraIds.filter((id) => known.has(id));
+    if (live.length !== wallCameraIds.length) setWall(live);
+  }, [cams, wallCameraIds, setWall]);
 
   // Cameras that are actually serving come first, so page 1 of the wall is
   // never a screen of dead tiles.

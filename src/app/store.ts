@@ -95,6 +95,8 @@ interface State {
   addToWall: (ids: string | string[]) => void;
   removeFromWall: (id: string) => void;
   clearWall: () => void;
+  /** Replace the wall wholesale — used to prune ids no camera answers to. */
+  setWall: (ids: string[]) => void;
   setWallLayout: (n: 0 | 1 | 4 | 9 | 16) => void;
   setDockOpen: (v: boolean) => void;
 
@@ -240,6 +242,7 @@ export const useStore = create<State>()(
   removeFromWall: (id) =>
     set((s) => ({ wallCameraIds: s.wallCameraIds.filter((x) => x !== id) })),
   clearWall: () => set({ wallCameraIds: [], dockOpen: false }),
+  setWall: (wallCameraIds) => set({ wallCameraIds }),
   setWallLayout: (wallLayout) => set({ wallLayout }),
   setDockOpen: (dockOpen) => set({ dockOpen }),
 
@@ -299,6 +302,23 @@ export const useStore = create<State>()(
     {
       name: 'sentinel-ui',
       storage: createJSONStorage(() => localStorage),
+      /**
+       * The grid renumbered its cameras from `1..30` to `cam01..cam30`. A
+       * persisted wall still holding the old identifiers matches nothing, so
+       * the header counted sixteen cameras while the wall rendered none — the
+       * saved state was not corrupt, it was addressing cameras that no longer
+       * exist under those names.
+       *
+       * Bumping the version drops that wall once. It is the honest trade:
+       * losing a saved layout is a small cost, and a wall that silently shows
+       * nothing is a large one.
+       */
+      version: 2,
+      migrate: (persisted, from) => {
+        const state = persisted as Record<string, unknown>;
+        if (from < 2) state.wallCameraIds = [];
+        return state;
+      },
       // Restore the operator's workspace, not transient data. Alerts and
       // traces come back from the API; filters reset intentionally so a
       // fresh session always starts from the full picture.
