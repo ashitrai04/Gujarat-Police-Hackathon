@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, subscribeAlerts } from '@/api/client';
 import { MapView } from '@/map/MapView';
 import { GuidedTour, tourUnseen } from './GuidedTour';
+import { Boundary } from '@/components/Boundary';
 import { CommandBar } from './CommandBar';
 import { LeftRail } from './LeftRail';
 import { RightPanel } from './RightPanel';
@@ -70,6 +71,7 @@ export function App() {
     const t = setTimeout(() => setTourOpen(true), 2600);
     return () => clearTimeout(t);
   }, []);
+  const closeTour = useCallback(() => setTourOpen(false), []);
   useEffect(() => {
     const open = () => setTourOpen(true);
     window.addEventListener('sentinel:tour', open);
@@ -115,7 +117,9 @@ export function App() {
       {!dockOpen && <DockHandle />}
 
       {/* Above every panel and the dock: the tour highlights them in turn. */}
-      <GuidedTour open={tourOpen} onClose={() => setTourOpen(false)} />
+      <Boundary name="Walkthrough" silent>
+        <GuidedTour open={tourOpen} onClose={closeTour} />
+      </Boundary>
       {pickerOpen && <CameraPicker onClose={() => setPickerOpen(false)} />}
       <PinMenu />
       <SoloCamera />

@@ -242,6 +242,11 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
   const [captionShown, setCaptionShown] = useState(false);
 
   const advance = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // One clock for the whole tour. Both the step sequence and the pause toggle
+  // used to write this timer independently, so the later one silently replaced
+  // the earlier and every step ran for half the hold it declared.
+  const deadline = useRef(0);
+  const remaining = useRef(0);
   const iRef = useRef(i);
   iRef.current = i;
   const step = STEPS[i];
@@ -261,6 +266,24 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
     if (iRef.current < STEPS.length - 1) setI((n) => n + 1);
     else finish();
   }, [finish]);
+
+  /* The step sequence must not depend on `next`, and `next` cannot help
+     changing: it chains to the `onClose` prop, which is a fresh closure on
+     every parent render. Reading it through a ref breaks that chain — without
+     this the effect re-runs whenever the parent renders, the step's action
+     mutates the store, the parent renders again, and the tour spins until
+     React tears the tree down. */
+  const nextRef = useRef(next);
+  nextRef.current = next;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+
+  const startClock = useCallback((ms: number) => {
+    if (advance.current) clearTimeout(advance.current);
+    deadline.current = Date.now() + ms;
+    remaining.current = ms;
+    advance.current = setTimeout(() => nextRef.current(), ms);
+  }, []);
 
   /* Run one step as an ordered sequence. */
   useEffect(() => {
@@ -315,34 +338,36 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
       // 5. Caption last.
       setCaptionShown(true);
 
-      if (!paused) {
-        advance.current = setTimeout(() => {
-          if (live && iRef.current === i) next();
-        }, step.hold);
-      }
+      // The full hold, every time. If the operator paused mid-sequence, the
+      // clock waits for them to resume rather than starting behind.
+      if (pausedRef.current) remaining.current = step.hold;
+      else startClock(step.hold);
     })();
 
     return () => {
       live = false;
       if (advance.current) clearTimeout(advance.current);
     };
-    // `paused` is handled separately so toggling it does not replay the step.
+    // Deliberately keyed on the step index alone. `step` is derived from `i`,
+    // and `next`/`paused` are read through refs — see nextRef above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, phase, i, step, next]);
+  }, [open, phase, i]);
 
-  /* Pausing stops the clock; resuming gives the remainder of the step. */
+  /* Pausing banks the time left; resuming hands exactly that back. */
   useEffect(() => {
-    if (!open || phase !== 'running') return;
+    if (!open || phase !== 'running' || !captionShown) return;
     if (paused) {
-      if (advance.current) clearTimeout(advance.current);
-      return;
+      if (advance.current) {
+        clearTimeout(advance.current);
+        advance.current = null;
+      }
+      remaining.current = Math.max(0, deadline.current - Date.now());
+    } else if (remaining.current > 0) {
+      startClock(remaining.current);
     }
-    if (!captionShown || !step) return;
-    advance.current = setTimeout(() => next(), step.hold / 2);
-    return () => {
-      if (advance.current) clearTimeout(advance.current);
-    };
-  }, [paused, open, phase, captionShown, step, next]);
+    // Only the pause toggle drives this; the step sequence owns the rest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused, captionShown]);
 
   useEffect(() => {
     if (!open) return;

@@ -70,20 +70,34 @@ interface Place {
  * Location prefix -> real place. Coordinates are the actual junctions; several
  * were confirmed from the burned-in camera captions (e.g. "Majevadi Gate PTZ-2",
  * "Dethali Char Rasta_FIX1", "CSITMS-32_PTZ2").
+ *
+ * Every coordinate here has been checked against the OpenStreetMap road
+ * network, because a CCTV camera is mounted on a road and one that plots into
+ * open farmland is wrong however plausible its name looks. Twenty-four were
+ * already within a few metres of a carriageway. Seven were not, and were moved:
+ * five stranded 125-450 m out in open ground, snapped to the nearest road;
+ * cam33 sitting on a housing road rather than the state highway it checks; and
+ * cam12, which was on a road but 3.2 km from the Adalaj toll plaza it is named
+ * after — being on *a* road is not the same as being in the right place.
+ *
+ * What this is not: a survey. The operators publish camera names, not
+ * positions, so these are the best placement the name and the road network
+ * together support — right junction, right side of town, not a mast location
+ * verified on the ground.
  */
 const PLACES: Record<string, Place> = {
   '01': { district: 'Ahmedabad', domain: 'traffic', lat: 23.0301, lng: 72.5100, label: 'Chiman Bhai Bridge', camType: 'ptz' },
   '02': { district: 'Ahmedabad', domain: 'traffic', lat: 23.0365, lng: 72.5580, label: 'Janpath', camType: 'ptz' },
-  '03': { district: 'Ahmedabad', domain: 'public', lat: 23.0410, lng: 72.5450, label: 'O.N.G.C. Office' },
+  '03': { district: 'Ahmedabad', domain: 'public', lat: 23.0396, lng: 72.54406, label: 'O.N.G.C. Office' },
   '04': { district: 'Ahmedabad', domain: 'traffic', lat: 23.0100, lng: 72.5620, label: 'Paldi Circle', camType: 'ptz' },
   '05': { district: 'Ahmedabad', domain: 'traffic', lat: 23.0980, lng: 72.5820, label: 'Visat Teen Rasta', camType: 'ptz' },
-  '06': { district: 'Junagadh', domain: 'traffic', lat: 21.5090, lng: 70.4720, label: 'Timbavadi Gate' },
-  '07': { district: 'Gir Somnath', domain: 'traffic', lat: 20.9000, lng: 70.3670, label: 'Hero Showroom, Gir Somnath' },
+  '06': { district: 'Junagadh', domain: 'traffic', lat: 21.5096, lng: 70.47302, label: 'Timbavadi Gate' },
+  '07': { district: 'Gir Somnath', domain: 'traffic', lat: 20.90112, lng: 70.36695, label: 'Hero Showroom, Gir Somnath' },
   '08': { district: 'Junagadh', domain: 'traffic', lat: 21.5222, lng: 70.4579, label: 'Majevadi Gate', camType: 'ptz' },
   '09': { district: 'Junagadh', domain: 'traffic', lat: 21.5330, lng: 70.4400, label: 'New Bypass Circle' },
   '10': { district: 'Junagadh', domain: 'traffic', lat: 21.5185, lng: 70.4630, label: 'Char Chowk Road 2' },
   '11': { district: 'Junagadh', domain: 'traffic', lat: 21.4980, lng: 70.4410, label: 'Dolatpara' },
-  '12': { district: 'Gandhinagar', domain: 'rto', lat: 23.1645, lng: 72.5810, label: 'Tri Mandir Adalaj Tollnaka' },
+  '12': { district: 'Gandhinagar', domain: 'rto', lat: 23.18638, lng: 72.56021, label: 'Tri Mandir Adalaj Tollnaka' },
   '13': { district: 'Ahmedabad', domain: 'public', lat: 23.0380, lng: 72.5460, label: 'CN Vidhyalaya' },
   '14': { district: 'Ahmedabad', domain: 'traffic', lat: 23.0245, lng: 72.5700, label: 'Delight Circle' },
   '15': { district: 'Ahmedabad', domain: 'public', lat: 23.0155, lng: 72.5310, label: 'Suvidha Park' },
@@ -94,13 +108,13 @@ const PLACES: Record<string, Place> = {
   '20': { district: 'Valsad', domain: 'traffic', lat: 20.5992, lng: 72.9342, label: 'Mohanpura' },
   '23': { district: 'Patan', domain: 'traffic', lat: 23.8493, lng: 72.1266, label: 'Patan Dethali Char Rasta', camType: 'fixed' },
   '28': { district: 'Banaskantha', domain: 'traffic', lat: 24.1710, lng: 72.4380, label: 'BK Mervada Tran Rasta' },
-  '30': { district: 'Valsad', domain: 'public', lat: 20.5700, lng: 72.9600, label: 'Kheram' },
-  '33': { district: 'Gandhinagar', domain: 'rto', lat: 23.1667, lng: 72.8167, label: 'Dehgam Check Post' },
+  '30': { district: 'Valsad', domain: 'public', lat: 20.57283, lng: 72.95698, label: 'Kheram' },
+  '33': { district: 'Gandhinagar', domain: 'rto', lat: 23.1675, lng: 72.81609, label: 'Dehgam Check Post' },
   '34': { district: 'Gandhinagar', domain: 'traffic', lat: 23.2100, lng: 72.7400, label: 'Dhanori' },
   '35': { district: 'Anand', domain: 'traffic', lat: 22.5645, lng: 72.9289, label: 'Tankal' },
   '36': { district: 'Navsari', domain: 'traffic', lat: 20.7690, lng: 72.9600, label: 'Bilimora — Station Road' },
   '37': { district: 'Navsari', domain: 'traffic', lat: 20.7720, lng: 72.9655, label: 'Bilimora — Market Yard' },
-  '38': { district: 'Navsari', domain: 'traffic', lat: 20.7610, lng: 72.9480, label: 'Bilimora — Bypass' },
+  '38': { district: 'Navsari', domain: 'traffic', lat: 20.76469, lng: 72.94773, label: 'Bilimora — Bypass' },
 };
 
 /** Cameras with no numeric prefix, matched on a keyword instead. */

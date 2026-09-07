@@ -3,7 +3,7 @@ import { X, MonitorPlay, MapPin, Crosshair, Radio } from 'lucide-react';
 import { api } from '@/api/client';
 import { useStore } from './store';
 import { Button, Card, Empty, Pill, SectionHeader } from '@/components/ui';
-import { CameraPlayer } from '@/components/CameraPlayer';
+import { DetectionView } from '@/features/cameras/DetectionView';
 import { CATEGORY_COLOR, DOMAIN_COLOR, DOMAIN_LABEL } from '@/api/types';
 import { TracePanel } from '@/features/tracking/TracePanel';
 import { WatchlistPanel } from '@/features/alerts/WatchlistPanel';
@@ -68,7 +68,7 @@ function CameraDetail({ cameraId }: { cameraId: string }) {
   const { data: cams } = useQuery({ queryKey: ['cameras.all'], queryFn: () => api.cameras() });
   const { data: dets } = useQuery({
     queryKey: ['detections', cameraId],
-    queryFn: () => api.detections({ cameraId, limit: 8 }),
+    queryFn: () => api.detections({ cameraId, limit: 12 }),
   });
   const addToWall = useStore((s) => s.addToWall);
   const cam = cams?.find((c) => c.id === cameraId);
@@ -92,8 +92,8 @@ function CameraDetail({ cameraId }: { cameraId: string }) {
         </div>
       </div>
 
-      {/* Live preview — the actual stream, not a placeholder */}
-      <CameraPlayer camera={cam} className="aspect-video w-full" />
+      {/* The live stream, and beside it the detector's own boxed frames */}
+      <DetectionView camera={cam} detections={dets} />
 
       <Button variant="primary" onClick={() => addToWall(cam.id)} className="w-full">
         <MonitorPlay size={13} /> Add to video wall
@@ -120,13 +120,33 @@ function CameraDetail({ cameraId }: { cameraId: string }) {
             {dets.map((d) => (
               <li
                 key={d.id}
-                className="flex items-center justify-between border-b py-1.5 last:border-0"
+                className="flex items-center gap-2 border-b py-1.5 last:border-0"
                 style={{ borderColor: 'var(--line-soft)' }}
               >
+                {/* The crop the read was made from, so the row is checkable
+                    without opening anything. */}
+                {d.plateCropUrl ? (
+                  <img
+                    src={d.plateCropUrl}
+                    alt=""
+                    className="h-5 w-14 shrink-0 rounded-[3px] object-cover"
+                    style={{ border: '1px solid var(--line)' }}
+                  />
+                ) : (
+                  <span className="w-14 shrink-0" />
+                )}
                 <span className="mono text-[12px]" style={{ color: 'var(--signal)' }}>
                   {d.plate}
                 </span>
-                <span className="mono text-[10px]" style={{ color: 'var(--text-mute)' }}>
+                {d.vehicleType && (
+                  <span className="text-[10px]" style={{ color: 'var(--text-mute)' }}>
+                    {d.vehicleType}
+                  </span>
+                )}
+                <span
+                  className="mono ml-auto text-[10px]"
+                  style={{ color: 'var(--text-mute)' }}
+                >
                   {new Date(d.timestamp).toLocaleTimeString('en-GB', {
                     hour: '2-digit',
                     minute: '2-digit',
