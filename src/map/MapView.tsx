@@ -401,6 +401,22 @@ export function MapView() {
     map.current.fitBounds(b, { padding: 140, duration: 900, maxZoom: 11 });
   }, [s.trace]);
 
+  /* ── Walkthrough camera ───────────────────────────────────── */
+  /* The tour narrates places, so it has to be able to look at them. Without
+     this every step describing a district or a route plays out on whatever
+     view the operator happened to leave behind. */
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || !s.tourView) return;
+    m.flyTo({
+      center: [s.tourView.lng, s.tourView.lat],
+      zoom: s.tourView.zoom,
+      pitch: s.tourView.pitch ?? 0,
+      duration: 1500,
+      essential: true,
+    });
+  }, [s.tourView, ready]);
+
   /* ── Alert focus: fly in and pulse the pin ────────────────── */
   useEffect(() => {
     const m = map.current;

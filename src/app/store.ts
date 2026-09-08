@@ -133,6 +133,11 @@ interface State {
   focusCameraId: string | null;
   setFocusCamera: (id: string | null) => void;
 
+  /* Where the walkthrough wants the map looking. `k` makes each request
+     distinct, so asking for the same view twice still moves the map. */
+  tourView: { lng: number; lat: number; zoom: number; pitch?: number; k: number } | null;
+  setTourView: (v: { lng: number; lat: number; zoom: number; pitch?: number }) => void;
+
   /* Tracking */
   trace: Route | null;
   traceProgress: number;
@@ -281,6 +286,9 @@ export const useStore = create<State>()(
   clearUnread: () => set({ unread: 0 }),
   focusCameraId: null,
   setFocusCamera: (focusCameraId) => set({ focusCameraId }),
+
+  tourView: null,
+  setTourView: (v) => set({ tourView: { ...v, k: Date.now() } }),
 
   trace: null,
   traceProgress: 1,

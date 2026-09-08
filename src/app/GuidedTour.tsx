@@ -44,6 +44,22 @@ interface Step {
 const SEEN_KEY = 'sentinel-tour-seen';
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* Views the tour looks at. Real places, so a step about districts is not
+   narrated over an empty corner of the map. */
+const GUJARAT = { lng: 71.6, lat: 22.6, zoom: 6.2 };
+const JUNAGADH = { lng: 70.4579, lat: 21.5222, zoom: 12.4 };
+const AHMEDABAD = { lng: 72.556, lat: 23.034, zoom: 10.8 };
+
+/** A registration this estate has actually read, and that is on the watchlist. */
+const DEMO_PLATE = 'GJ03PA8482';
+
+/** Everything off, so each layer can be shown arriving rather than found. */
+function clearLayers(set: Ctx['set']) {
+  const now = useStore.getState();
+  now.gis.forEach((g) => set.toggleGis(g));
+  now.pois.forEach((p) => set.togglePoi(p));
+}
+
 const STEPS: Step[] = [
   {
     id: 'map',
@@ -51,13 +67,16 @@ const STEPS: Step[] = [
     title: 'The map is the product',
     desc:
       'Twenty-six departments across Gujarat run their own cameras, and none of the '
-      + 'systems talk to each other. Sentinel puts all of them on one surface. Every '
-      + 'feature that follows is worked from this map — filtering, opening feeds, '
-      + 'following a vehicle.',
-    hold: 4800,
+      + 'systems talk to each other. Sentinel puts all of them on one surface. The '
+      + 'walkthrough starts with every overlay switched off and turns them on one at '
+      + 'a time, so you can see what each one contributes.',
+    hold: 5200,
     run: ({ set }) => {
       set.closePanel();
       set.setDockOpen(false);
+      set.setTrace(null);
+      clearLayers(set);
+      set.setTourView(GUJARAT);
     },
   },
   {
@@ -69,7 +88,80 @@ const STEPS: Step[] = [
       + 'treats fuel stations. Traffic, health, PDS, RTO and municipal estates each '
       + 'toggle independently, so an operator sees the cameras they are responsible '
       + 'for rather than all thirty at once.',
-    hold: 4600,
+    hold: 5000,
+  },
+
+  /* The geography, one layer at a time. */
+  {
+    id: 'gis-state',
+    target: 'gis',
+    title: 'Layer one, the state boundary',
+    desc:
+      'Watch the map rather than the panel. The Gujarat boundary draws first: it is '
+      + 'the frame every other layer is read against, and the line a vehicle crosses '
+      + 'to leave the jurisdiction.',
+    hold: 5000,
+    run: ({ set }) => {
+      set.setTourView(GUJARAT);
+      set.toggleGis('state');
+    },
+  },
+  {
+    id: 'gis-districts',
+    target: 'gis',
+    title: 'Layer two, district boundaries',
+    desc:
+      'Thirty-three districts, each its own police jurisdiction. This is what turns '
+      + '<b>a camera at Majevadi Gate</b> into <b>a camera Junagadh is answerable '
+      + 'for</b>, and it is how the estate divides for reporting.',
+    hold: 5000,
+    run: ({ set }) => set.toggleGis('districts'),
+  },
+  {
+    id: 'gis-highways',
+    target: 'gis',
+    title: 'Layer three, national highways',
+    desc:
+      '<b>11,079</b> highway segments. These carry the traffic that leaves the state, '
+      + 'so they are where interception is possible and where camera coverage is '
+      + 'worth arguing about.',
+    hold: 5000,
+    run: ({ set }) => {
+      set.toggleGis('highways');
+      set.setTourView({ ...GUJARAT, zoom: 6.8 });
+    },
+  },
+  {
+    id: 'gis-roads',
+    target: 'gis',
+    title: 'Layer four, major roads',
+    desc:
+      '<b>12,404</b> state and major roads. A traced vehicle is matched onto this '
+      + 'network rather than drawn as a straight line, because a route that obviously '
+      + 'did not happen undermines every number shown beside it.',
+    hold: 5200,
+    run: ({ set }) => set.toggleGis('roads'),
+  },
+
+  /* Reference points. */
+  {
+    id: 'poi',
+    target: 'poi',
+    title: 'Where a vehicle can be intercepted',
+    desc:
+      '<b>126</b> police stations, then <b>232</b> toll plazas, then <b>741</b> '
+      + 'railway stations, each arriving as it is named. Toll plazas earn their place '
+      + 'specifically: a vehicle leaving the state passes one, which makes them the '
+      + 'natural interception points on a traced route.',
+    hold: 6800,
+    run: async ({ set }) => {
+      set.setTourView({ ...GUJARAT, zoom: 6.6 });
+      set.togglePoi('police');
+      await wait(1700);
+      set.togglePoi('toll');
+      await wait(1700);
+      set.togglePoi('railway');
+    },
   },
   {
     id: 'camtype',
@@ -78,59 +170,13 @@ const STEPS: Step[] = [
     desc:
       'Ownership and capability are separate questions. An operator hunting a '
       + 'registration wants the cameras <b>able to read one</b>, whoever owns them. '
-      + 'Watch the counts as fixed cameras are switched off — the estate drops from '
-      + '<b>30 to 5</b>.',
-    hold: 5400,
+      + 'Watch the counts as fixed cameras are switched off, then back on.',
+    hold: 5600,
     run: async ({ set }) => {
       set.toggleCamType('fixed');
-      await wait(2600);
+      await wait(2400);
       set.toggleCamType('fixed');
     },
-  },
-  {
-    id: 'gis',
-    target: 'gis',
-    title: 'The geography a route is read against',
-    desc:
-      'State boundary, districts, <b>11,079</b> national-highway segments and '
-      + '<b>12,404</b> major roads. A traced vehicle follows these roads rather than a '
-      + 'straight line — a route that obviously did not happen undermines every number '
-      + 'shown beside it.',
-    hold: 5200,
-    run: async ({ set }) => {
-      set.toggleGis('highways');
-      await wait(1500);
-      set.toggleGis('state');
-    },
-  },
-  {
-    id: 'poi',
-    target: 'poi',
-    title: 'Where a vehicle can be intercepted',
-    desc:
-      '<b>126</b> police stations, <b>232</b> toll plazas and <b>741</b> railway '
-      + 'stations from OpenStreetMap. Toll plazas earn their place specifically: a '
-      + 'vehicle leaving the state passes one, which makes them the natural '
-      + 'interception points on a traced route.',
-    hold: 4800,
-    run: async ({ set }) => {
-      set.togglePoi('police');
-      await wait(1400);
-      set.togglePoi('toll');
-    },
-  },
-  {
-    id: 'registry',
-    target: 'registry',
-    title: 'Onboarding — three ways in',
-    desc:
-      'Departments hand over the spreadsheets they already keep, and no two name their '
-      + 'columns alike. The importer reads whatever headers it is given and maps them '
-      + 'itself — <b>9/9, 9/9 and 10/10</b> columns across three deliberately different '
-      + 'formats, with every decision shown for confirmation before anything is saved.',
-    hold: 6200,
-    settle: 700,
-    run: ({ set }) => set.openPanel({ kind: 'registry' }),
   },
   {
     id: 'wall',
@@ -140,69 +186,105 @@ const STEPS: Step[] = [
       'Cameras are added from map pins or by selecting an area: the map chooses, the '
       + 'wall shows. Tiles stay uniform rather than stretching, playable cameras sort '
       + 'first, and a feed that cannot be reached in twelve seconds falls back to '
-      + 'recorded footage — labelled <b>RECORDED</b>, never passed off as live.',
+      + 'recorded footage, labelled <b>RECORDED</b> and never passed off as live.',
     hold: 6400,
     settle: 900,
     run: async ({ set }) => {
       set.closePanel();
+      set.setTourView(JUNAGADH);
       const cams = await api.cameras();
       set.setWall(cams.slice(0, 4).map((c) => c.id));
       set.setDockOpen(true);
     },
   },
+
+  /* The tools, each actually used rather than pointed at. */
   {
     id: 'events',
     target: 'events',
-    title: 'Every sighting, with its evidence',
+    title: 'Tool 1, event search with the evidence',
     desc:
-      'OCR on this footage is right most of the time, not all of the time. So each '
-      + 'reading carries the <b>plate crop</b> it was made from and the <b>full frame</b> '
-      + 'with the vehicle boxed. An operator confirms the characters by eye before '
-      + 'acting, and the frame is the accountability record.',
-    hold: 6400,
-    settle: 700,
+      'Opening on real sightings from <b>Majevadi Gate</b>. OCR on this footage is '
+      + 'right most of the time, not all of the time, so each reading carries the '
+      + '<b>plate crop</b> it was made from and the <b>full frame</b> with the '
+      + 'vehicle boxed. An operator confirms the characters by eye before acting.',
+    hold: 7000,
+    settle: 800,
     run: ({ set }) => {
       set.setDockOpen(false);
+      set.setTourView(JUNAGADH);
       set.openPanel({ kind: 'events' });
     },
   },
   {
     id: 'trace',
     target: 'trace',
-    title: 'Following a vehicle across cameras',
+    title: 'Tool 2, following a vehicle',
     desc:
-      'A plate returns every camera that saw it, in time order, drawn as a route with '
-      + 'a playback slider. Because sightings are timestamped, map matching can reject '
-      + 'links a vehicle could not physically have made — and where a gap cannot be '
-      + 'bridged the straight line is kept rather than a plausible path invented.',
-    hold: 6000,
-    settle: 700,
-    run: ({ set }) => set.openPanel({ kind: 'trace' }),
+      'Running a real registration: <b>GJ03PA8482</b>, read at Majevadi Gate. The '
+      + 'search returns every camera that saw it in time order and the map fits to '
+      + 'the result. Sightings are timestamped, so map matching can reject a link a '
+      + 'vehicle could not physically have made.',
+    hold: 7600,
+    settle: 800,
+    run: async ({ set }) => {
+      set.openPanel({ kind: 'trace' });
+      await wait(1100);
+      try {
+        const route = await api.route(DEMO_PLATE);
+        set.setTrace(route);
+        set.setTraceProgress(0);
+        if (route.stops.length > 1) set.setTracePlaying(true);
+      } catch {
+        /* Analytics unreachable, and the panel already says so itself. */
+      }
+    },
   },
   {
     id: 'watchlist',
     target: 'watchlist',
-    title: 'Watchlist and live alerts',
+    title: 'Tool 3, watchlist and live alerts',
     desc:
-      'Stolen and wanted vehicles are matched at the moment a plate is read. On a hit '
-      + 'the camera pin flashes, the map moves to it, and an alert card carries the '
-      + 'snapshot and the reason. Acknowledgement records who acted and when.',
-    hold: 5400,
-    settle: 700,
-    run: ({ set }) => set.openPanel({ kind: 'watchlist' }),
+      'That same registration is on the watchlist as <b>stolen</b>, which is what '
+      + 'makes the previous step an alert rather than a log line. Matching happens at '
+      + 'the moment a plate is read: the pin flashes, the map moves to it, and the '
+      + 'alert carries the snapshot and the reason. Acknowledgement records who acted.',
+    hold: 6400,
+    settle: 800,
+    run: ({ set }) => {
+      set.setTrace(null);
+      set.openPanel({ kind: 'watchlist' });
+    },
   },
   {
     id: 'health',
     target: 'health',
-    title: 'Knowing what is actually up',
+    title: 'Tool 4, knowing what is actually up',
     desc:
       'The grid reports every camera as live, including the ones that are not, so '
-      + 'availability is measured rather than trusted. Probing follows the wall rather '
-      + 'than sweeping the estate — this grid permits one session per address and '
-      + 'refuses bursts.',
-    hold: 5200,
-    settle: 700,
+      + 'availability is measured rather than trusted. Probing follows the wall '
+      + 'rather than sweeping the estate, because this grid permits one session per '
+      + 'address and refuses bursts.',
+    hold: 6000,
+    settle: 800,
     run: ({ set }) => set.openPanel({ kind: 'health' }),
+  },
+  {
+    id: 'registry',
+    target: 'registry',
+    title: 'Tool 5, onboarding a new department',
+    desc:
+      'Departments hand over the spreadsheets they already keep, and no two name '
+      + 'their columns alike. The importer reads whatever headers it is given and '
+      + 'maps them itself: <b>9/9, 9/9 and 10/10</b> columns across three '
+      + 'deliberately different formats, with every decision shown for confirmation '
+      + 'before anything is saved.',
+    hold: 6600,
+    settle: 800,
+    run: ({ set }) => {
+      set.setTourView(AHMEDABAD);
+      set.openPanel({ kind: 'registry' });
+    },
   },
   {
     id: 'end',
@@ -210,12 +292,13 @@ const STEPS: Step[] = [
     title: 'That is the platform',
     desc:
       'Registry and GIS, unified viewing, ANPR with evidence, vehicle tracing and '
-      + 'alerting — running against thirty live cameras with a recorded fallback '
+      + 'alerting, running against thirty live cameras with a recorded fallback '
       + 'behind them. Press <b>Guide</b> in the top bar to watch this again.',
     hold: 5600,
     run: ({ set }) => {
       set.closePanel();
       set.setDockOpen(false);
+      set.setTourView(GUJARAT);
     },
   },
 ];
@@ -240,6 +323,10 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
   const [pressing, setPressing] = useState(false);
   const [ripple, setRipple] = useState<{ x: number; y: number; k: number } | null>(null);
   const [captionShown, setCaptionShown] = useState(false);
+  // Captions differ in length, so the card differs in height. Measuring it
+  // beats assuming a number that is wrong for most steps.
+  const [captionH, setCaptionH] = useState(216);
+  const captionEl = useRef<HTMLDivElement | null>(null);
 
   const advance = useRef<ReturnType<typeof setTimeout> | null>(null);
   // One clock for the whole tour. Both the step sequence and the pause toggle
@@ -314,7 +401,7 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
         const r = el.getBoundingClientRect();
         if (r.top < 0 || r.bottom > window.innerHeight) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          await wait(420);
+          await wait(700);
           if (!live) return;
         }
         const box = el.getBoundingClientRect();
@@ -337,6 +424,11 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
 
       // 5. Caption last.
       setCaptionShown(true);
+      // Measure on the next frame, once this step's text has been laid out.
+      requestAnimationFrame(() => {
+        const h = captionEl.current?.offsetHeight;
+        if (h) setCaptionH(h);
+      });
 
       // The full hold, every time. If the operator paused mid-sequence, the
       // clock waits for them to resume rather than starting behind.
@@ -424,7 +516,7 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
     );
   }
 
-  const pos = captionPosition(spot);
+  const pos = captionPosition(spot, captionH);
 
   return createPortal(
     <div className="tour-root">
@@ -432,8 +524,8 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
         <div
           className="tour-spotlight"
           style={{
-            top: spot.top - 7, left: spot.left - 7,
-            width: spot.width + 14, height: spot.height + 14,
+            top: spot.top - 10, left: spot.left - 10,
+            width: spot.width + 20, height: spot.height + 20,
           }}
         />
       ) : (
@@ -457,6 +549,7 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
       </div>
 
       <div
+        ref={captionEl}
         className={`tour-caption${captionShown ? ' enter' : ''}`}
         style={{ left: pos.x, top: pos.y, opacity: captionShown ? 1 : 0 }}
       >
@@ -526,21 +619,33 @@ const cursorYOf = (el: HTMLElement) => {
 };
 
 /** Beside the highlight, never off-screen, never covering what it describes. */
-function captionPosition(rect: DOMRect | null) {
+function captionPosition(rect: DOMRect | null, height: number) {
   const W = 384;
-  const H = 216;
-  const M = 16;
+  const H = height || 216;
+  const M = 14;
+  const clampY = (v: number) => Math.max(M, Math.min(v, window.innerHeight - H - M));
+
   if (!rect) {
     return { x: (window.innerWidth - W) / 2, y: window.innerHeight / 2 + 30 };
   }
+
+  // A narrow target — anything in the left rail — gets the caption alongside
+  // it, level with its middle. Anchoring to the bottom edge instead leaves the
+  // card floating out in the map with nothing visually joining the two.
+  if (rect.width < 320) {
+    const x = rect.right + M;
+    const y = clampY(rect.top + rect.height / 2 - H / 2);
+    if (x + W <= window.innerWidth - M) return { x, y };
+    return { x: Math.max(M, rect.left - W - M), y };
+  }
+
+  // A wide target keeps the caption directly under it, flipping above when
+  // there is no room below.
   let y = rect.bottom + M;
   if (y + H > window.innerHeight - M) y = rect.top - H - M;
-  if (y < M) y = Math.max(M, (window.innerHeight - H) / 2);
-
-  // Prefer sitting to the right of a narrow target such as the left rail,
-  // rather than on top of it.
-  let x = rect.width < 320 ? rect.right + M : rect.left;
-  if (x + W > window.innerWidth - M) x = Math.max(M, rect.left - W - M);
+  y = clampY(y);
+  let x = rect.left;
+  if (x + W > window.innerWidth - M) x = Math.max(M, window.innerWidth - W - M);
   if (x < M) x = M;
   return { x, y };
 }

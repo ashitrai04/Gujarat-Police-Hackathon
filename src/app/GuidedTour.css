@@ -117,15 +117,20 @@
 /* One element, not four panels: an enormous spread shadow dims everything
    outside the ring, so the highlighted control keeps its true colours while
    the rest of the interface recedes. It also animates as a single box, which
-   is what makes the spotlight glide between steps instead of jumping. */
+   is what makes the spotlight glide between steps instead of jumping.
+
+   The shade is deliberately light. Most steps are describing something the
+   map is doing — a layer appearing, a route drawing — and a shade heavy
+   enough to make the highlight pop also hides the thing being demonstrated,
+   which leaves the walkthrough talking about a black rectangle. */
 .tour-spotlight {
   position: absolute;
-  border-radius: 9px;
+  border-radius: 10px;
   border: 2px solid var(--signal);
   box-shadow:
-    0 0 0 4px var(--signal-glow),
-    0 0 24px var(--signal-glow),
-    0 0 0 9999px rgba(4, 8, 15, 0.74);
+    0 0 0 3px var(--signal-glow),
+    0 0 28px 4px var(--signal-glow),
+    0 0 0 9999px rgba(4, 8, 15, 0.46);
   transition: top 0.55s cubic-bezier(0.16, 1, 0.3, 1),
               left 0.55s cubic-bezier(0.16, 1, 0.3, 1),
               width 0.55s cubic-bezier(0.16, 1, 0.3, 1),
@@ -135,9 +140,18 @@
 .tour-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(4, 8, 15, 0.74);
+  /* Lighter still: a step with no target is talking about the whole map. */
+  background: rgba(4, 8, 15, 0.34);
   animation: tour-fade 0.4s ease both;
 }
+
+/* A steady pulse on the ring. The shade is light enough now that the
+   highlight needs its own movement to stay findable. */
+@keyframes tour-breathe {
+  0%, 100% { box-shadow: 0 0 0 3px var(--signal-glow), 0 0 28px 4px var(--signal-glow), 0 0 0 9999px rgba(4, 8, 15, 0.46); }
+  50%      { box-shadow: 0 0 0 7px var(--signal-glow), 0 0 40px 8px var(--signal-glow), 0 0 0 9999px rgba(4, 8, 15, 0.46); }
+}
+.tour-spotlight { animation: tour-breathe 2.4s ease-in-out infinite; }
 
 /* ── Cursor ──────────────────────────────────────────────────────── */
 
@@ -266,6 +280,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tour-spotlight, .tour-cursor, .tour-caption { transition: none; }
+  .tour-spotlight { animation: none; }
   .tour-welcome, .tour-welcome-card, .tour-caption.enter, .tour-backdrop {
     animation: none;
   }
