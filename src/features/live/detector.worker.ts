@@ -35,7 +35,8 @@ const MODELS = {
 
 /** COCO classes worth a plate. Pedestrians and animals are not traffic. */
 const VEHICLE: Record<number, VehicleClass> = { 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck' };
-const VEHICLE_CONF = 0.3;
+/** The batch pipeline's own threshold (CONFIG det_conf), so both agree on what counts. */
+const VEHICLE_CONF = 0.35;
 const PLATE_CONF = 0.3;
 /** Narrower than this, a vehicle's plate is too few pixels to read. */
 const MIN_VEHICLE_W = 90;
@@ -64,7 +65,10 @@ let sessions: { vehicle: ort.InferenceSession; plate: ort.InferenceSession; ocr:
 async function fetchWithProgress(urls: string[]): Promise<ArrayBuffer[]> {
   const heads = await Promise.all(urls.map((u) => fetch(u)));
   heads.forEach((r, i) => { if (!r.ok) throw new Error(`${urls[i]}: HTTP ${r.status}`); });
-  const total = heads.reduce((n, r) => n + Number(r.headers.get('content-length') || 0), 0);
+  // Behind compression, content-length is the compressed size while the stream
+  // yields decompressed bytes, so a total from it would be wrong. Report none.
+  const encoded = heads.some((r) => r.headers.get('content-encoding'));
+  const total = encoded ? 0 : heads.reduce((n, r) => n + Number(r.headers.get('content-length') || 0), 0);
   let loaded = 0;
   return Promise.all(heads.map(async (res) => {
     const reader = res.body!.getReader();
@@ -74,7 +78,7 @@ async function fetchWithProgress(urls: string[]): Promise<ArrayBuffer[]> {
       if (done) break;
       parts.push(value);
       loaded += value.length;
-      post({ type: 'progress', loaded, total: Math.max(total, loaded) });
+      post({ type: 'progress', loaded, total: total ? Math.max(total, loaded) : 0 });
     }
     const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
     let o = 0;

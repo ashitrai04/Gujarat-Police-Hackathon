@@ -50,6 +50,7 @@ export function CameraPlayer({
   route,
   overlay,
   onVideo,
+  source = 'live',
 }: {
   camera: Camera;
   className?: string;
@@ -65,6 +66,12 @@ export function CameraPlayer({
   overlay?: ReactNode;
   /** The playing element, for anything that needs its frames. */
   onVideo?: (video: HTMLVideoElement | null) => void;
+  /**
+   * `archive` plays the recorded clip on purpose rather than as a fallback —
+   * for running detection on daytime footage while the live feed is dark or
+   * low-resolution. It is badged RECORDED exactly as the fallback is.
+   */
+  source?: 'live' | 'archive';
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const onVideoRef = useRef(onVideo);
@@ -224,6 +231,12 @@ export function CameraPlayer({
         el.play().catch(() => {});
         return;
       }
+      if (source === 'archive') {
+        const alt = fallbackUrl(camera.id);
+        if (alt) startHls(alt, true);
+        else fail('No recording for this camera');
+        return;
+      }
       startHls(camera.streamUrl);
     };
 
@@ -246,7 +259,7 @@ export function CameraPlayer({
       v.removeAttribute('src');
       v.load();
     };
-  }, [camera.id, camera.streamUrl, camera.status, startDelayMs, route, attempt]);
+  }, [camera.id, camera.streamUrl, camera.status, startDelayMs, route, attempt, source]);
 
   const showOverlay = phase === 'connecting' || phase === 'error' || phase === 'waiting';
 

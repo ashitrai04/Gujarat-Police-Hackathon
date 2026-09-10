@@ -7,6 +7,7 @@ import {
 import { Pill } from '@/components/ui';
 import { CameraPlayer } from '@/components/CameraPlayer';
 import { api } from '@/api/client';
+import { ARCHIVE_DATE, fallbackUrl } from '@/api/fallback';
 import type { Camera, Detection } from '@/api/types';
 import { DetectionCanvas } from '@/features/live/DetectionCanvas';
 import { useLiveDetector, type LiveDetector } from '@/features/live/useLiveDetector';
@@ -39,15 +40,19 @@ export function DetectionView({
 }) {
   const [mode, setMode] = useState<'live' | 'detections'>('live');
   const [detect, setDetect] = useState(true);
+  const [source, setSource] = useState<'live' | 'archive'>('live');
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
-  const live = useLiveDetector(video, mode === 'live' && detect, camera.id);
+  const live = useLiveDetector(video, mode === 'live' && detect, `${camera.id}:${source}`);
+  const hasArchive = !!fallbackUrl(camera.id);
+  // A different camera starts on its live feed again.
+  useEffect(() => { setSource('live'); }, [camera.id]);
 
   const { data: watchlist } = useQuery({ queryKey: ['watchlist'], queryFn: () => api.watchlist() });
   const watch = useMemo(
     () => new Map((watchlist ?? []).filter((w) => w.active).map((w) => [w.plate.toUpperCase(), w.category])),
     [watchlist],
   );
-  const log = usePlateLog(live, camera.id);
+  const log = usePlateLog(live, `${camera.id}:${source}`);
   const [i, setI] = useState(0);
   const [zoom, setZoom] = useState<string | null>(null);
 
@@ -95,8 +100,10 @@ export function DetectionView({
 
       {mode === 'live' ? (
         <CameraPlayer
+          key={source}
           camera={camera}
           className="aspect-video w-full"
+          source={source}
           onVideo={setVideo}
           overlay={detect ? <DetectionCanvas result={live.result} watch={watch} /> : null}
         />
@@ -191,6 +198,31 @@ export function DetectionView({
               })}
             </span>
           </div>
+        </div>
+      )}
+
+      {mode === 'live' && hasArchive && (
+        <div className="flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-mute)' }}>
+          <span>Source</span>
+          {(['live', 'archive'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSource(s)}
+              className="rounded-[4px] px-1.5 py-[2px] font-medium"
+              style={{
+                background: source === s ? 'var(--surface-3)' : 'transparent',
+                border: `1px solid ${source === s ? 'var(--line)' : 'transparent'}`,
+                color: source === s ? 'var(--text)' : 'var(--text-mute)',
+              }}
+            >
+              {s === 'live' ? 'Live feed' : `Recorded · ${ARCHIVE_DATE}`}
+            </button>
+          ))}
+          {source === 'live' && live.result && live.result.frame.w < 1280 && (
+            <span className="ml-auto truncate" style={{ color: 'var(--alert)' }} title="Plates need roughly 70px to read; at this resolution they are about half that.">
+              feed is {live.result.frame.w}×{live.result.frame.h} — too low to read plates
+            </span>
+          )}
         </div>
       )}
 
@@ -349,7 +381,9 @@ function LiveStatus({
   else if (e.status === 'loading' || e.status === 'idle')
     line = e.status === 'loading' && e.total
       ? `Loading detection models — ${mb(e.loaded)} of ${mb(e.total)} MB (once; cached after)`
-      : 'Starting the detector…';
+      : e.status === 'loading' && e.loaded
+        ? `Loading detection models — ${mb(e.loaded)} MB so far (once; cached after)`
+        : 'Starting the detector…';
   else if (live.frameError) { line = `Frame failed — ${live.frameError}`; tone = 'var(--alert)'; }
   else if (!live.result) line = 'Waiting for picture…';
   else {
