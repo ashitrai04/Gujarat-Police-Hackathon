@@ -48,6 +48,36 @@ export const SENTINEL_HOST =
  */
 export const STREAM_BASE = import.meta.env.VITE_STREAM_BASE || DEFAULT_PROXY;
 
+/** Hosts the grid has served streams from. Only these are proxied. */
+const GRID_HOSTS = new Set([
+  'cctv.corp8.cloud', 'live.corp8.cloud', 'live.sentinelgujarat.in', GRID_IP,
+]);
+
+/**
+ * The address a browser can actually play a stream from.
+ *
+ * The registry stores each camera's real upstream address, and should: the
+ * pipeline worker pulls from it server-side, where nothing else will do. But a
+ * browser cannot load that address — the grid sends no CORS header and wants a
+ * session cookie only the proxy holds — so a grid stream handed to the player
+ * as stored fails every time and falls through to the recorded archive. Every
+ * signed-in operator was seeing exactly that.
+ *
+ * Grid streams are therefore rewritten onto the proxy here, at the one point
+ * the browser needs them. Anything else — a department's own camera with a
+ * public HLS URL — is left untouched.
+ */
+export function playableStreamUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    if (!GRID_HOSTS.has(u.hostname)) return url;
+    return `${STREAM_BASE}${u.pathname}${u.search}`;
+  } catch {
+    return url; // relative already, or not a URL at all — nothing to rewrite
+  }
+}
+
 /** Raw shape returned by GET /cameras.json — a flat array, nothing more. */
 export interface RawCamera {
   id: string;
@@ -64,6 +94,8 @@ interface Place {
   lng: number;
   label: string;
   camType?: CamType;
+  /** Proven to read plates — by the pipeline's own output, not by assumption. */
+  anpr?: boolean;
 }
 
 /**
@@ -93,9 +125,9 @@ const PLACES: Record<string, Place> = {
   '05': { district: 'Ahmedabad', domain: 'traffic', lat: 23.0980, lng: 72.5820, label: 'Visat Teen Rasta', camType: 'ptz' },
   '06': { district: 'Junagadh', domain: 'traffic', lat: 21.5096, lng: 70.47302, label: 'Timbavadi Gate' },
   '07': { district: 'Gir Somnath', domain: 'traffic', lat: 20.90112, lng: 70.36695, label: 'Hero Showroom, Gir Somnath' },
-  '08': { district: 'Junagadh', domain: 'traffic', lat: 21.5222, lng: 70.4579, label: 'Majevadi Gate', camType: 'ptz' },
+  '08': { district: 'Junagadh', domain: 'traffic', lat: 21.5222, lng: 70.4579, label: 'Majevadi Gate', camType: 'ptz', anpr: true },
   '09': { district: 'Junagadh', domain: 'traffic', lat: 21.5330, lng: 70.4400, label: 'New Bypass Circle' },
-  '10': { district: 'Junagadh', domain: 'traffic', lat: 21.5185, lng: 70.4630, label: 'Char Chowk Road 2' },
+  '10': { district: 'Junagadh', domain: 'traffic', lat: 21.5185, lng: 70.4630, label: 'Char Chowk Road 2', anpr: true },
   '11': { district: 'Junagadh', domain: 'traffic', lat: 21.4980, lng: 70.4410, label: 'Dolatpara' },
   '12': { district: 'Gandhinagar', domain: 'rto', lat: 23.18638, lng: 72.56021, label: 'Tri Mandir Adalaj Tollnaka' },
   '13': { district: 'Ahmedabad', domain: 'public', lat: 23.0380, lng: 72.5460, label: 'CN Vidhyalaya' },
@@ -179,9 +211,11 @@ export function toCamera(raw: RawCamera): Camera {
       'hls',
     ].filter(Boolean),
     camType: place?.camType ?? (/ptz/i.test(raw.name) ? 'ptz' : 'fixed'),
-    // Nothing in the catalogue speaks to ANPR suitability any more, so this is
-    // left to the pipeline rather than guessed here.
-    anprCapable: false,
+    // The catalogue says nothing about ANPR suitability, so it is taken from
+    // evidence: a camera is capable once the pipeline has read plates from it.
+    // Majevadi Gate and Char Chowk have; Khaparia and Mohanpura were run and
+    // produced none — geometry, not bitrate, decides this.
+    anprCapable: place?.anpr ?? false,
     // HLS is the only browser-playable route: RTSP and WHEP are raw media on a
     // bare IP that no CDN can proxy, and WHEP is plain HTTP, which an HTTPS
     // page cannot load at all.

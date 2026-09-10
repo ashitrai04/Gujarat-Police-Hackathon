@@ -1,6 +1,5 @@
 import { CAMERA_SELECT, DB_READY, db, toGeom, type AuditRow, type CameraRow } from './db';
-import { isSignedIn } from './auth';
-import { fetchRegistry } from './registry';
+import { fetchRegistry, playableStreamUrl } from './registry';
 import type { Camera, Domain } from './types';
 
 /** Fallback department label when a row carries no department of its own. */
@@ -46,7 +45,7 @@ function rowToCamera(r: CameraRow): Camera {
     // A camera onboarded by a department may have no browser-playable URL at
     // all — an RTSP-only camera is normal. The player shows "no feed" rather
     // than inventing one.
-    streamUrl: r.hls_url ?? '',
+    streamUrl: playableStreamUrl(r.hls_url),
     status:
       r.status === 'online' ? 'online'
       : r.status === 'degraded' || r.status === 'maintenance' ? 'degraded'
@@ -73,31 +72,46 @@ function rowToCamera(r: CameraRow): Camera {
 /**
  * Every camera the current user is allowed to see. RLS does the scoping.
  *
- * Three cases, and the app must not go blank in any of them:
- *   no database        -> the live grid catalogue, read-only
- *   signed out         -> the grid too; RLS grants nothing to the anon role,
- *                         so querying would return an empty map and look broken
- *   signed in, empty   -> the grid, until someone runs the grid import
+ * The registry is read first for everyone, signed in or not. Migration 0006
+ * granted the anon role read access to it, and the alternative — the grid's
+ * own catalogue — is the least reliable source available: it sits behind a
+ * login that permits one session per address, and answers 403 whenever
+ * another client holds that session. A visitor who has not signed in is
+ * exactly the person, a judge on a first visit, who must not be shown an
+ * empty map because of it. The registry also carries the corrected
+ * coordinates; the grid carries none at all.
+ *
+ * The grid remains the fallback, for the cases where the registry cannot
+ * answer: no database configured, the query failing, or a database nobody has
+ * imported cameras into yet.
  */
 export async function listCameras(): Promise<Camera[]> {
-  if (!db || !(await isSignedIn())) return (await fetchRegistry()).cameras;
+  if (!db) return (await fetchRegistry()).cameras;
 
   const { data, error } = await db
     .from('cameras')
     .select(CAMERA_SELECT)
     .order('id');
-  if (error) throw new Error(error.message);
 
-  const rows = data as unknown as CameraRow[];
-  if (!rows.length) return (await fetchRegistry()).cameras;
-  return rows.map(rowToCamera);
+  const rows = (error ? [] : data) as unknown as CameraRow[];
+  if (rows.length) return rows.map(rowToCamera);
+
+  try {
+    return (await fetchRegistry()).cameras;
+  } catch (gridError) {
+    // Both sources down. Report the registry's reason if it had one — that is
+    // the source we expected to answer.
+    throw error ? new Error(error.message) : gridError;
+  }
 }
 
 /** Where the cameras on screen actually came from, for the UI to report. */
 export async function activeSource(): Promise<RegistrySource> {
-  if (!db || !(await isSignedIn())) return 'grid';
-  const { count } = await db.from('cameras').select('id', { count: 'exact', head: true });
-  return (count ?? 0) > 0 ? 'database' : 'grid';
+  if (!db) return 'grid';
+  const { count, error } = await db
+    .from('cameras')
+    .select('id', { count: 'exact', head: true });
+  return !error && (count ?? 0) > 0 ? 'database' : 'grid';
 }
 
 export interface CameraInput {

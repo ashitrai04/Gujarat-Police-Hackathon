@@ -407,11 +407,25 @@ export function MapView() {
      view the operator happened to leave behind. */
   useEffect(() => {
     const m = map.current;
-    if (!m || !ready || !s.tourView) return;
+    const v = s.tourView;
+    if (!m || !ready || !v) return;
+    if (v.bounds) {
+      // The walkthrough's caption occupies the left of the map (384px card
+      // plus margins), so the subject is framed in the space to its right
+      // rather than edge to edge underneath it.
+      m.fitBounds(v.bounds, {
+        padding: { top: 40, bottom: 40, left: 430, right: 50 },
+        pitch: v.pitch ?? 0,
+        duration: 1500,
+        essential: true,
+      });
+      return;
+    }
+    if (v.lng == null || v.lat == null) return;
     m.flyTo({
-      center: [s.tourView.lng, s.tourView.lat],
-      zoom: s.tourView.zoom,
-      pitch: s.tourView.pitch ?? 0,
+      center: [v.lng, v.lat],
+      zoom: v.zoom ?? m.getZoom(),
+      pitch: v.pitch ?? 0,
       duration: 1500,
       essential: true,
     });

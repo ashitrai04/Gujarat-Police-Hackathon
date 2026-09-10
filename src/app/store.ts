@@ -34,6 +34,22 @@ export type PoiLayer =
  * layer is deliberately absent — camera geography comes from the live
  * registry, not a static snapshot.
  */
+/**
+ * Where the walkthrough wants the map looking: a point and zoom, or an area
+ * to frame. An area is better whenever the subject has a shape — a state
+ * framed by its bounds fits any screen, where a fixed zoom that fits one
+ * monitor shows half a neighbouring state on a wider one.
+ */
+export type TourView = {
+  k: number;
+  pitch?: number;
+  /** South-west and north-east corners, [lng, lat]. Wins over a point. */
+  bounds?: [[number, number], [number, number]];
+  lng?: number;
+  lat?: number;
+  zoom?: number;
+};
+
 export type GisLayer = 'state' | 'districts' | 'highways' | 'roads';
 
 export type RightPanel =
@@ -135,8 +151,14 @@ interface State {
 
   /* Where the walkthrough wants the map looking. `k` makes each request
      distinct, so asking for the same view twice still moves the map. */
-  tourView: { lng: number; lat: number; zoom: number; pitch?: number; k: number } | null;
-  setTourView: (v: { lng: number; lat: number; zoom: number; pitch?: number }) => void;
+  tourView: TourView | null;
+  setTourView: (v: Omit<TourView, 'k'>) => void;
+
+  /* A search to open the event panel on. Lets something other than the panel
+     — the walkthrough, a link from an alert — ask for a specific query rather
+     than the empty default. */
+  eventsPreset: { plate?: string; hours?: number; k: number } | null;
+  presetEvents: (p: { plate?: string; hours?: number }) => void;
 
   /* Tracking */
   trace: Route | null;
@@ -289,6 +311,9 @@ export const useStore = create<State>()(
 
   tourView: null,
   setTourView: (v) => set({ tourView: { ...v, k: Date.now() } }),
+
+  eventsPreset: null,
+  presetEvents: (p) => set({ eventsPreset: { ...p, k: Date.now() } }),
 
   trace: null,
   traceProgress: 1,

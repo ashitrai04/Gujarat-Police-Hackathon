@@ -4,7 +4,7 @@ import {
   Camera, ChevronRight, Compass, Database, Map as MapIcon, Pause, Play,
   Route as RouteIcon, ScanLine, Siren,
 } from 'lucide-react';
-import { useStore } from './store';
+import { useStore, type GisLayer, type PoiLayer } from './store';
 import { api } from '@/api/client';
 import './GuidedTour.css';
 
@@ -46,18 +46,69 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /* Views the tour looks at. Real places, so a step about districts is not
    narrated over an empty corner of the map. */
-const GUJARAT = { lng: 71.6, lat: 22.6, zoom: 6.2 };
+const GUJARAT = { bounds: [[68.1, 20.1], [74.5, 24.7]] as [[number, number], [number, number]] };
 const JUNAGADH = { lng: 70.4579, lat: 21.5222, zoom: 12.4 };
 const AHMEDABAD = { lng: 72.556, lat: 23.034, zoom: 10.8 };
 
 /** A registration this estate has actually read, and that is on the watchlist. */
 const DEMO_PLATE = 'GJ03PA8482';
 
+/*
+ * The operator's view before the walkthrough touched it. The tour switches
+ * every overlay off, turns seven back on, replaces the wall and moves the map;
+ * without putting that back, anyone who watches it once is left with a
+ * console configured for a demonstration rather than for their work.
+ */
+type Snapshot = {
+  gis: GisLayer[];
+  pois: PoiLayer[];
+  showBoundaries: boolean;
+  showHeat: boolean;
+  showGaps: boolean;
+  wall: string[];
+};
+let saved: Snapshot | null = null;
+
 /** Everything off, so each layer can be shown arriving rather than found. */
 function clearLayers(set: Ctx['set']) {
   const now = useStore.getState();
+  if (!saved) {
+    saved = {
+      gis: [...now.gis],
+      pois: [...now.pois],
+      showBoundaries: now.showBoundaries,
+      showHeat: now.showHeat,
+      showGaps: now.showGaps,
+      wall: [...now.wallCameraIds],
+    };
+  }
   now.gis.forEach((g) => set.toggleGis(g));
   now.pois.forEach((p) => set.togglePoi(p));
+  if (now.showBoundaries) set.toggleBoundaries();
+  if (now.showHeat) set.toggleHeat();
+  if (now.showGaps) set.toggleGaps();
+}
+
+/** Put the operator's view back as it was. Safe to call when nothing was saved. */
+function restoreView() {
+  if (!saved) return;
+  const s = useStore.getState();
+  const want = saved;
+  saved = null;
+  // Toggle only the differences: switching an already-correct layer would
+  // flip it the wrong way.
+  s.gis.filter((g) => !want.gis.includes(g)).forEach((g) => s.toggleGis(g));
+  want.gis.filter((g) => !s.gis.includes(g)).forEach((g) => s.toggleGis(g));
+  s.pois.filter((p) => !want.pois.includes(p)).forEach((p) => s.togglePoi(p));
+  want.pois.filter((p) => !s.pois.includes(p)).forEach((p) => s.togglePoi(p));
+  const now = useStore.getState();
+  if (now.showBoundaries !== want.showBoundaries) now.toggleBoundaries();
+  if (now.showHeat !== want.showHeat) now.toggleHeat();
+  if (now.showGaps !== want.showGaps) now.toggleGaps();
+  now.setWall(want.wall);
+  now.setTrace(null);
+  now.closePanel();
+  now.setDockOpen(false);
 }
 
 const STEPS: Step[] = [
@@ -128,7 +179,6 @@ const STEPS: Step[] = [
     hold: 5000,
     run: ({ set }) => {
       set.toggleGis('highways');
-      set.setTourView({ ...GUJARAT, zoom: 6.8 });
     },
   },
   {
@@ -155,7 +205,6 @@ const STEPS: Step[] = [
       + 'natural interception points on a traced route.',
     hold: 6800,
     run: async ({ set }) => {
-      set.setTourView({ ...GUJARAT, zoom: 6.6 });
       set.togglePoi('police');
       await wait(1700);
       set.togglePoi('toll');
@@ -204,15 +253,17 @@ const STEPS: Step[] = [
     target: 'events',
     title: 'Tool 1, event search with the evidence',
     desc:
-      'Opening on real sightings from <b>Majevadi Gate</b>. OCR on this footage is '
-      + 'right most of the time, not all of the time, so each reading carries the '
-      + '<b>plate crop</b> it was made from and the <b>full frame</b> with the '
-      + 'vehicle boxed. An operator confirms the characters by eye before acting.',
+      'Searching a partial plate, <b>GJ03</b>, the way an operator does with three '
+      + 'characters from a witness. Every match comes back with the <b>plate crop</b> '
+      + 'it was read from and the <b>full frame</b> with the vehicle boxed, because '
+      + 'OCR is right most of the time, not all of it, and an operator confirms '
+      + 'the characters by eye before acting.',
     hold: 7000,
     settle: 800,
     run: ({ set }) => {
       set.setDockOpen(false);
       set.setTourView(JUNAGADH);
+      set.presetEvents({ plate: 'GJ03', hours: 24 * 30 });
       set.openPanel({ kind: 'events' });
     },
   },
@@ -261,10 +312,11 @@ const STEPS: Step[] = [
     target: 'health',
     title: 'Tool 4, knowing what is actually up',
     desc:
-      'The grid reports every camera as live, including the ones that are not, so '
-      + 'availability is measured rather than trusted. Probing follows the wall '
-      + 'rather than sweeping the estate, because this grid permits one session per '
-      + 'address and refuses bursts.',
+      'The grid reports every camera as live, including the dead ones, so its word '
+      + 'is not shown as health. Cameras are <b>available</b> or <b>unavailable</b> '
+      + 'only once probed; the rest are <b>unverified</b>, and the panel says so. '
+      + 'Wall cameras are probed continuously and the estate on request, slowly, '
+      + 'because this grid revokes sessions that probe in bursts.',
     hold: 6000,
     settle: 800,
     run: ({ set }) => set.openPanel({ kind: 'health' }),
@@ -298,6 +350,7 @@ const STEPS: Step[] = [
     run: ({ set }) => {
       set.closePanel();
       set.setDockOpen(false);
+      set.setTrace(null);
       set.setTourView(GUJARAT);
     },
   },
@@ -345,6 +398,7 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
     } catch {
       /* private browsing — the tour simply offers itself again */
     }
+    restoreView();
     onClose();
   }, [onClose]);
 
@@ -383,7 +437,16 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
     (async () => {
       // 1. Perform the action first, so the interface is in the state the
       //    caption is about to describe.
-      await step.run?.({ set: useStore.getState() });
+      // A failing action must not stop the walkthrough. It used to: the wall
+      // step fetched the camera list, the fetch threw, and the rejection ended
+      // this sequence before the caption or the clock — the tour froze with a
+      // spotlight on the previous control and no way forward but Skip. The
+      // step is still shown; it just demonstrates less.
+      try {
+        await step.run?.({ set: useStore.getState() });
+      } catch (err) {
+        console.warn(`[tour] step "${step.id}" action failed`, err);
+      }
       if (!live) return;
 
       // 2. Let it settle. A panel measured while opening reports the wrong box.
@@ -429,6 +492,14 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
         const h = captionEl.current?.offsetHeight;
         if (h) setCaptionH(h);
       });
+
+      // The hold is reading time, so it starts when the caption can actually
+      // be read — after the browser has painted it, not when React was asked
+      // to. Two frames: the first commits the change, the second is drawn with
+      // it. On a busy machine these can be far apart, and starting the clock
+      // early is how a caption ends up on screen for a fraction of its hold.
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      if (!live) return;
 
       // The full hold, every time. If the operator paused mid-sequence, the
       // clock waits for them to resume rather than starting behind.
@@ -523,10 +594,7 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
       {spot ? (
         <div
           className="tour-spotlight"
-          style={{
-            top: spot.top - 10, left: spot.left - 10,
-            width: spot.width + 20, height: spot.height + 20,
-          }}
+          style={ringBox(spot)}
         />
       ) : (
         <div className="tour-backdrop" />
@@ -594,6 +662,21 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
   );
 }
 
+/**
+ * The ring around a target, padded but kept on screen. A control flush with
+ * the viewport edge — everything in the left rail — would otherwise have its
+ * ring drawn half off the page, which reads as the highlight missing.
+ */
+function ringBox(r: DOMRect) {
+  const PAD = 10;
+  const EDGE = 3;
+  const left = Math.max(EDGE, r.left - PAD);
+  const top = Math.max(EDGE, r.top - PAD);
+  const right = Math.min(window.innerWidth - EDGE, r.right + PAD);
+  const bottom = Math.min(window.innerHeight - EDGE, r.bottom + PAD);
+  return { left, top, width: right - left, height: bottom - top };
+}
+
 /** An arrow, not a dot — it reads as a pointer being moved by someone. */
 function Pointer() {
   return (
@@ -626,7 +709,12 @@ function captionPosition(rect: DOMRect | null, height: number) {
   const clampY = (v: number) => Math.max(M, Math.min(v, window.innerHeight - H - M));
 
   if (!rect) {
-    return { x: (window.innerWidth - W) / 2, y: window.innerHeight / 2 + 30 };
+    // A step with no target is talking about the map itself, so the card must
+    // not sit in the middle of it. Bottom-left of the map area — the same
+    // column the rail captions use — and the map frames its subject to the
+    // right of it (see CAPTION_CLEARANCE).
+    const mapLeft = document.querySelector('.mapboxgl-map')?.getBoundingClientRect().left ?? 0;
+    return { x: Math.max(M, mapLeft + M), y: Math.max(M, window.innerHeight - H - 36) };
   }
 
   // A narrow target — anything in the left rail — gets the caption alongside

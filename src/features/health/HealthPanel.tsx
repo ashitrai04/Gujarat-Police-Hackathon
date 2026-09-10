@@ -1,15 +1,79 @@
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { RefreshCw } from 'lucide-react';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { api } from '@/api/client';
-import { Card, Empty, SectionHeader, StatusDot } from '@/components/ui';
+import { Button, Card, Empty, SectionHeader } from '@/components/ui';
+import { probeAll, type StreamHealth } from '@/api/health';
+import { useStreamHealth } from '@/api/useStreamHealth';
 import { DOMAIN_COLOR, DOMAIN_LABEL, STATUS_COLOR, type Domain } from '@/api/types';
 import { useStore } from '@/app/store';
 
+const SWEEP_KEY = ['stream.health.sweep'];
+
+/**
+ * What is actually playable, as measured — not what the grid says.
+ *
+ * The grid reports every camera as live, the dead ones included, so its status
+ * field cannot be shown as health. Only a probe tells a working stream from a
+ * dead one, and the grid limits how much probing it tolerates: it revokes a
+ * session that fetches too hard, and its own guidance is to open only what is
+ * being watched. So cameras fall into three groups, and the panel says which:
+ *
+ *   available    probed, and serving a playable stream
+ *   unavailable  probed, and not
+ *   unverified   not probed — the grid claims it is live; nobody has checked
+ *
+ * Wall cameras are probed continuously. Everything else is probed when an
+ * operator asks, by a sweep paced slowly enough that the grid does not treat
+ * it as abuse. Presenting the unverified cameras as "online" — which this panel
+ * used to — reported exactly the claim it exists to check.
+ */
 export function HealthPanel() {
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.health });
   const { data: cams } = useQuery({ queryKey: ['cameras.all'], queryFn: () => api.cameras() });
   const setFocusCamera = useStore((s) => s.setFocusCamera);
+  const qc = useQueryClient();
+
+  const { data: wallHealth } = useStreamHealth();
+  const { data: sweep } = useQuery<Record<string, StreamHealth>>({
+    queryKey: SWEEP_KEY,
+    queryFn: () => Promise.resolve({}),
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const runSweep = async () => {
+    if (!cams?.length || progress) return;
+    setProgress({ done: 0, total: cams.length });
+    try {
+      const result = await probeAll(cams, 1, (done, total) => setProgress({ done, total }));
+      qc.setQueryData(SWEEP_KEY, result);
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  // The newest check of each camera wins, whichever route produced it.
+  const measured = useMemo(() => {
+    const out: Record<string, StreamHealth> = { ...(sweep ?? {}) };
+    for (const [id, h] of Object.entries(wallHealth ?? {})) {
+      if (!out[id] || out[id].checkedAt < h.checkedAt) out[id] = h;
+    }
+    return out;
+  }, [sweep, wallHealth]);
+
+  const counts = useMemo(() => {
+    const c = { available: 0, unavailable: 0, unverified: 0 };
+    for (const cam of cams ?? []) {
+      const st = measured[cam.id]?.state;
+      if (st === 'available') c.available++;
+      else if (st === 'unavailable') c.unavailable++;
+      else c.unverified++;
+    }
+    return c;
+  }, [cams, measured]);
 
   const byDomain = useMemo(() => {
     if (!cams) return [];
@@ -23,20 +87,32 @@ export function HealthPanel() {
   }, [cams]);
 
   const down = useMemo(
-    () => cams?.filter((c) => c.status !== 'online') ?? [],
-    [cams],
+    () => (cams ?? []).filter((c) => measured[c.id]?.state === 'unavailable'),
+    [cams, measured],
   );
 
-  if (!health) return <Empty>Loading camera health…</Empty>;
+  if (!health || !cams) return <Empty>Loading camera health…</Empty>;
 
   const pct = (n: number) => Math.round((n / health.total) * 100);
 
   return (
     <div className="flex flex-col gap-3 p-3">
       <div className="grid grid-cols-3 gap-2">
-        <Stat label="Online" value={health.online} colour={STATUS_COLOR.online} sub={`${pct(health.online)}%`} />
-        <Stat label="Degraded" value={health.degraded} colour={STATUS_COLOR.degraded} sub={`${pct(health.degraded)}%`} />
-        <Stat label="Offline" value={health.offline} colour={STATUS_COLOR.offline} sub={`${pct(health.offline)}%`} />
+        <Stat label="Available" value={counts.available} colour={STATUS_COLOR.online} sub="measured" />
+        <Stat label="Unavailable" value={counts.unavailable} colour={STATUS_COLOR.offline} sub="measured" />
+        <Stat label="Unverified" value={counts.unverified} colour="var(--text-dim)" sub="grid says live" />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button onClick={runSweep} disabled={!!progress}>
+          <RefreshCw size={12} className={progress ? 'animate-spin' : ''} />
+          {progress ? `Checked ${progress.done} of ${progress.total}` : 'Check all cameras'}
+        </Button>
+        <span className="text-[10px] leading-snug" style={{ color: 'var(--text-mute)' }}>
+          {progress
+            ? 'Paced one at a time — the grid revokes sessions that probe in bursts.'
+            : 'Wall cameras are checked continuously; the rest on request.'}
+        </span>
       </div>
 
       <Card>
@@ -60,9 +136,10 @@ export function HealthPanel() {
             />
           </div>
           <p className="mt-2 text-[10.5px] leading-relaxed" style={{ color: 'var(--text-mute)' }}>
-            {health.anprCapable} of {health.total} cameras are tagged ANPR-capable. The rest are
-            wide overview views where a plate will not resolve — expected, and tagged
-            deliberately in the registry.
+            {health.anprCapable} of {health.total} cameras have produced plate reads. Capability
+            is taken from that evidence rather than assumed: most of this estate is wide overview
+            views where a plate never resolves to readable pixels, which camera geometry decides,
+            not bitrate.
           </p>
         </div>
       </Card>
@@ -110,7 +187,11 @@ export function HealthPanel() {
           Needs attention
         </SectionHeader>
         {!down.length ? (
-          <Empty>Every camera is reporting healthy.</Empty>
+          <Empty>
+            {counts.unverified
+              ? `No measured failures. ${counts.unverified} camera${counts.unverified === 1 ? ' has' : 's have'} not been checked yet.`
+              : 'Every camera answered with a playable stream.'}
+          </Empty>
         ) : (
           <ul className="px-3 pb-3">
             {down.map((c) => (
@@ -127,7 +208,12 @@ export function HealthPanel() {
                       {c.id} · {c.district}
                     </span>
                   </span>
-                  <StatusDot status={c.status} label />
+                  <span className="mono text-right text-[10px]" style={{ color: 'var(--alert)' }}>
+                    no stream
+                    <span className="block" style={{ color: 'var(--text-mute)' }}>
+                      {checkedAgo(measured[c.id]?.checkedAt)}
+                    </span>
+                  </span>
                 </button>
               </li>
             ))}
@@ -136,6 +222,12 @@ export function HealthPanel() {
       </Card>
     </div>
   );
+}
+
+function checkedAgo(at: number | undefined): string {
+  if (!at) return '';
+  const min = Math.round((Date.now() - at) / 60_000);
+  return min < 1 ? 'just now' : `${min} min ago`;
 }
 
 function Stat({

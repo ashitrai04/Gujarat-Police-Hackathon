@@ -127,14 +127,28 @@
   position: absolute;
   border-radius: 10px;
   border: 2px solid var(--signal);
-  box-shadow:
-    0 0 0 3px var(--signal-glow),
-    0 0 28px 4px var(--signal-glow),
-    0 0 0 9999px rgba(4, 8, 15, 0.46);
+  /* Static. This shadow's 9999px spread is what dims the screen, so anything
+     that changes it — a transition, a keyframe — repaints the entire viewport
+     on every frame, over a WebGL map that is already busy. An earlier version
+     pulsed it and the tour stuttered badly enough that captions reached the
+     screen seconds after their clock had started. */
+  box-shadow: 0 0 0 9999px rgba(4, 8, 15, 0.46);
   transition: top 0.55s cubic-bezier(0.16, 1, 0.3, 1),
               left 0.55s cubic-bezier(0.16, 1, 0.3, 1),
               width 0.55s cubic-bezier(0.16, 1, 0.3, 1),
               height 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The glow lives on its own layer and pulses with opacity and scale only —
+   properties the compositor animates without repainting anything. */
+.tour-spotlight::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 4px var(--signal-glow), 0 0 30px 6px var(--signal-glow);
+  will-change: opacity, transform;
+  animation: tour-breathe 2.4s ease-in-out infinite;
 }
 
 .tour-backdrop {
@@ -145,13 +159,6 @@
   animation: tour-fade 0.4s ease both;
 }
 
-/* A steady pulse on the ring. The shade is light enough now that the
-   highlight needs its own movement to stay findable. */
-@keyframes tour-breathe {
-  0%, 100% { box-shadow: 0 0 0 3px var(--signal-glow), 0 0 28px 4px var(--signal-glow), 0 0 0 9999px rgba(4, 8, 15, 0.46); }
-  50%      { box-shadow: 0 0 0 7px var(--signal-glow), 0 0 40px 8px var(--signal-glow), 0 0 0 9999px rgba(4, 8, 15, 0.46); }
-}
-.tour-spotlight { animation: tour-breathe 2.4s ease-in-out infinite; }
 
 /* ── Cursor ──────────────────────────────────────────────────────── */
 
@@ -268,6 +275,11 @@
 
 @keyframes tour-fade { from { opacity: 0; } to { opacity: 1; } }
 
+@keyframes tour-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.012); }
+}
+
 @keyframes tour-rise {
   from { opacity: 0; transform: translateY(10px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -280,7 +292,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tour-spotlight, .tour-cursor, .tour-caption { transition: none; }
-  .tour-spotlight { animation: none; }
+  .tour-spotlight::after { animation: none; }
   .tour-welcome, .tour-welcome-card, .tour-caption.enter, .tour-backdrop {
     animation: none;
   }

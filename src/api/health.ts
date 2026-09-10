@@ -96,14 +96,17 @@ export async function probeCamera(cam: Camera): Promise<StreamHealth> {
 export async function probeAll(
   cams: Camera[],
   concurrency = 1,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<Record<string, StreamHealth>> {
   const out: Record<string, StreamHealth> = {};
   let cursor = 0;
+  let done = 0;
 
   async function worker() {
     while (cursor < cams.length) {
       const cam = cams[cursor++];
       out[cam.id] = await probeCamera(cam);
+      onProgress?.(++done, cams.length);
       await sleep(PACE_MS);
     }
   }

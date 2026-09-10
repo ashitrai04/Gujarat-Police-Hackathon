@@ -10,6 +10,13 @@ export function TracePanel() {
     useStore();
   const setFocusCamera = useStore((s) => s.setFocusCamera);
   const [plate, setPlate] = useState(trace?.plate ?? '');
+  // A trace can arrive from outside this panel — a detection card's plate, the
+  // walkthrough. The box must show the plate the results are for; otherwise
+  // it sits empty with its placeholder above someone else's sightings, which
+  // reads as though a different vehicle was searched.
+  useEffect(() => {
+    if (trace?.plate) setPlate(trace.plate);
+  }, [trace?.plate]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const raf = useRef<number | null>(null);
