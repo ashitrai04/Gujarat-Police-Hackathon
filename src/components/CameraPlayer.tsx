@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Hls from 'hls.js';
 import { StatusDot } from './ui';
 import type { Camera } from '@/api/types';
@@ -48,6 +48,8 @@ export function CameraPlayer({
   showHeader = true,
   startDelayMs = 0,
   route,
+  overlay,
+  onVideo,
 }: {
   camera: Camera;
   className?: string;
@@ -59,8 +61,18 @@ export function CameraPlayer({
    * this prop changes and playback starts by itself.
    */
   route?: 'hls' | null;
+  /** Drawn over the picture, under the header — e.g. live detection boxes. */
+  overlay?: ReactNode;
+  /** The playing element, for anything that needs its frames. */
+  onVideo?: (video: HTMLVideoElement | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const onVideoRef = useRef(onVideo);
+  onVideoRef.current = onVideo;
+  useEffect(() => {
+    onVideoRef.current?.(videoRef.current);
+    return () => onVideoRef.current?.(null);
+  }, []);
   const [phase, setPhase] = useState<Phase>('connecting');
   const [msg, setMsg] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -251,6 +263,8 @@ export function CameraPlayer({
         preload="auto"
         className="h-full w-full object-cover"
       />
+
+      {overlay}
 
       {showOverlay && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5">

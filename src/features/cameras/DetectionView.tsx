@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
-  Boxes, ChevronLeft, ChevronRight, Maximize2, Radio, ScanLine, X,
+  Boxes, ChevronLeft, ChevronRight, Maximize2, Radio, ScanLine, ScanSearch, X,
 } from 'lucide-react';
 import { Pill } from '@/components/ui';
 import { CameraPlayer } from '@/components/CameraPlayer';
+import { api } from '@/api/client';
 import type { Camera, Detection } from '@/api/types';
+import { DetectionCanvas } from '@/features/live/DetectionCanvas';
+import { useLiveDetector, type LiveDetector } from '@/features/live/useLiveDetector';
 
 /**
  * The camera preview, with the detector's output available beside the feed.
@@ -21,6 +25,10 @@ import type { Camera, Detection } from '@/api/types';
  * which is exactly the model plot; what is added here is the reading chrome —
  * plate, vehicle class, time, how many frames voted — and the plate crop
  * inset, because the number in a full frame is too small to check by eye.
+ *
+ * The Live tab does draw boxes — its own. There the detector runs in the
+ * browser on the very frames being displayed, so every box describes the
+ * picture it sits on (see features/live).
  */
 export function DetectionView({
   camera,
@@ -30,6 +38,16 @@ export function DetectionView({
   detections: Detection[] | undefined;
 }) {
   const [mode, setMode] = useState<'live' | 'detections'>('live');
+  const [detect, setDetect] = useState(true);
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  const live = useLiveDetector(video, mode === 'live' && detect, camera.id);
+
+  const { data: watchlist } = useQuery({ queryKey: ['watchlist'], queryFn: () => api.watchlist() });
+  const watch = useMemo(
+    () => new Map((watchlist ?? []).filter((w) => w.active).map((w) => [w.plate.toUpperCase(), w.category])),
+    [watchlist],
+  );
+  const log = usePlateLog(live, camera.id);
   const [i, setI] = useState(0);
   const [zoom, setZoom] = useState<string | null>(null);
 
@@ -76,7 +94,12 @@ export function DetectionView({
       </div>
 
       {mode === 'live' ? (
-        <CameraPlayer camera={camera} className="aspect-video w-full" />
+        <CameraPlayer
+          camera={camera}
+          className="aspect-video w-full"
+          onVideo={setVideo}
+          overlay={detect ? <DetectionCanvas result={live.result} watch={watch} /> : null}
+        />
       ) : !shown ? (
         <div
           className="flex aspect-video w-full flex-col items-center justify-center gap-1.5 rounded-[6px]"
@@ -171,6 +194,10 @@ export function DetectionView({
         </div>
       )}
 
+      {mode === 'live' && (
+        <LiveStatus live={live} on={detect} onToggle={() => setDetect((d) => !d)} log={log} watch={watch} />
+      )}
+
       {mode === 'detections' && shown && (
         <p className="px-0.5 text-[10px]" style={{ color: 'var(--text-mute)' }}>
           <ScanLine size={10} className="mr-1 inline" />
@@ -263,5 +290,125 @@ function Zoom({
       </figure>
     </div>,
     document.body,
+  );
+}
+
+interface LoggedPlate {
+  text: string;
+  cls: string;
+  reads: number;
+  confidence: number;
+  at: number;
+}
+
+/**
+ * Plates read live on this feed since it was opened, newest first. Only
+ * settled reads are logged — a plate still changing between frames is a guess
+ * in progress, and a list of guesses would mostly be noise.
+ */
+function usePlateLog(live: LiveDetector, cameraId: string) {
+  const [log, setLog] = useState<LoggedPlate[]>([]);
+  useEffect(() => { setLog([]); }, [cameraId]);
+  useEffect(() => {
+    const stable = live.result?.tracks.filter((t) => t.plate?.stable && t.plate.text) ?? [];
+    if (!stable.length) return;
+    setLog((prev) => {
+      const next = [...prev];
+      for (const t of stable) {
+        const p = t.plate!;
+        // Newest reading of a plate replaces its older one and moves to the top.
+        const text = p.text!;
+        const i = next.findIndex((x) => x.text === text);
+        if (i >= 0) next.splice(i, 1);
+        next.unshift({ text, cls: t.cls, reads: p.reads, confidence: p.confidence, at: Date.now() });
+      }
+      return next.slice(0, 8);
+    });
+  }, [live.result]);
+  return log;
+}
+
+function LiveStatus({
+  live, on, onToggle, log, watch,
+}: {
+  live: LiveDetector;
+  on: boolean;
+  onToggle: () => void;
+  log: LoggedPlate[];
+  watch: Map<string, string>;
+}) {
+  const e = live.engine;
+  const vehicles = live.result?.tracks.length ?? 0;
+  const plates = live.result?.tracks.filter((t) => t.plate?.text).length ?? 0;
+  const mb = (n: number) => (n / 1048576).toFixed(0);
+
+  let line: string;
+  let tone = 'var(--text-mute)';
+  if (!on) line = 'Detection off';
+  else if (e.status === 'error') { line = `Detector unavailable — ${e.message}`; tone = 'var(--alert)'; }
+  else if (e.status === 'loading' || e.status === 'idle')
+    line = e.status === 'loading' && e.total
+      ? `Loading detection models — ${mb(e.loaded)} of ${mb(e.total)} MB (once; cached after)`
+      : 'Starting the detector…';
+  else if (live.frameError) { line = `Frame failed — ${live.frameError}`; tone = 'var(--alert)'; }
+  else if (!live.result) line = 'Waiting for picture…';
+  else {
+    line = `${e.status === 'ready' && e.backend === 'webgpu' ? 'GPU' : 'CPU'} · ${live.fps.toFixed(1)} fps · `
+      + `${vehicles} vehicle${vehicles === 1 ? '' : 's'} · ${plates} plate${plates === 1 ? '' : 's'} read`;
+    tone = 'var(--text-dim)';
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onToggle}
+          className="flex shrink-0 items-center gap-1.5 rounded-[5px] px-2 py-[4px] text-[10.5px] font-medium"
+          style={{
+            background: on ? 'var(--signal-dim)' : 'transparent',
+            border: `1px solid ${on ? 'var(--signal)' : 'var(--line)'}`,
+            color: on ? 'var(--signal)' : 'var(--text-dim)',
+          }}
+          aria-pressed={on}
+        >
+          <ScanSearch size={11} /> {on ? 'Detecting' : 'Detect'}
+        </button>
+        <span className="mono min-w-0 truncate text-[10px]" style={{ color: tone }} title={line}>
+          {line}
+        </span>
+      </div>
+
+      {on && log.length > 0 && (
+        <div className="rounded-[6px] px-2 py-1.5" style={{ background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+          <div className="mb-1 text-[9.5px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-mute)' }}>
+            Read live on this feed
+          </div>
+          <ul className="space-y-0.5">
+            {log.map((p) => {
+              const hit = watch.get(p.text);
+              return (
+                <li key={p.text} className="flex items-center gap-2 text-[11px]">
+                  <span className="mono font-bold" style={{ color: hit ? 'var(--alert)' : 'var(--signal)' }}>{p.text}</span>
+                  <span style={{ color: 'var(--text-mute)' }}>{p.cls}</span>
+                  {hit && <Pill colour="var(--alert)">{hit}</Pill>}
+                  <span className="mono ml-auto text-[9.5px]" style={{ color: 'var(--text-mute)' }}>
+                    {p.reads} reads · {Math.round(p.confidence * 100)}%
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {on && (
+        <p className="text-[9.5px] leading-snug" style={{ color: 'var(--text-mute)' }}>
+          Runs in this browser on the frames shown. A plate is only spelled out once it is wide
+          enough to read and the reads agree — otherwise it is marked, not guessed. Amber means
+          still settling, teal means steady across several reads. A lighter model than the
+          recorded pipeline: confirm a plate by eye before acting on it.
+        </p>
+      )}
+    </div>
   );
 }

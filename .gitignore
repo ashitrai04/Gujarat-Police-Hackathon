@@ -1,4 +1,6 @@
 # deps / build
+# ONNX Runtime wasm, copied from node_modules by scripts/copy-ort.mjs
+public/ort
 node_modules
 dist
 dist-ssr
