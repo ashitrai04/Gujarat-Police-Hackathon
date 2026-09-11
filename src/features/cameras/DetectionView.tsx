@@ -437,10 +437,10 @@ function LiveStatus({
 
       {on && (
         <p className="text-[9.5px] leading-snug" style={{ color: 'var(--text-mute)' }}>
-          Runs in this browser on the frames shown. A plate is only spelled out once it is wide
-          enough to read and the reads agree — otherwise it is marked, not guessed. Amber means
-          still settling, teal means steady across several reads. A lighter model than the
-          recorded pipeline: confirm a plate by eye before acting on it.
+          Runs in this browser on the frames shown. A plate is spelled out only once it is wide
+          enough to read and has held steady across several reads; until then it is marked
+          "reading plate…", never guessed. A lighter model than the recorded pipeline, so it
+          reads fewer plates — confirm one by eye before acting on it.
         </p>
       )}
     </div>

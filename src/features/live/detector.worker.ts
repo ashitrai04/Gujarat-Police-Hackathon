@@ -38,8 +38,16 @@ const VEHICLE: Record<number, VehicleClass> = { 2: 'car', 3: 'motorcycle', 5: 'b
 /** The batch pipeline's own threshold (CONFIG det_conf), so both agree on what counts. */
 const VEHICLE_CONF = 0.35;
 const PLATE_CONF = 0.3;
-/** Narrower than this, a vehicle's plate is too few pixels to read. */
-const MIN_VEHICLE_W = 90;
+/*
+ * Plates are only searched for on vehicles at least this wide, in frame pixels.
+ * Tuned by replaying the recorded 1080p cam08 clip through a copy of this
+ * worker and scoring against the 26 plates the batch pipeline found in it: at
+ * 90px the searches were spent on distant vehicles that never yield a plate
+ * (3.2 fps, 2 settled); at 200px the loop runs at 5.2 fps and settles 3, all
+ * correct. Absolute pixels, not a fraction of the frame — what makes a plate
+ * readable is how many pixels it has, whatever the stream's resolution.
+ */
+const MIN_VEHICLE_W = 200;
 /** Plate reads per frame, largest vehicles first — keeps a busy junction at speed. */
 const MAX_PLATES_PER_FRAME = 5;
 /*
@@ -92,6 +100,10 @@ async function init(base: string) {
   // Threaded WebAssembly needs cross-origin isolation, which this site does not
   // enable; one thread is the honest configuration rather than a failed one.
   ort.env.wasm.numThreads = 1;
+  // The runtime reports routine fallbacks — a few shape operations placed on
+  // the CPU beside the GPU — through console.error. They are expected, not
+  // faults, and red errors in the console read as a broken page.
+  ort.env.logLevel = 'error';
 
   const [veh, plate, ocr] = await fetchWithProgress(
     [MODELS.vehicle, MODELS.plate, MODELS.ocr].map((m) => base + m),
@@ -100,9 +112,9 @@ async function init(base: string) {
   // GPU where the browser offers it; otherwise the same models on the CPU.
   const hasGpu = 'gpu' in navigator && !!(await (navigator as unknown as { gpu: { requestAdapter(): Promise<unknown> } }).gpu.requestAdapter().catch(() => null));
   const attempt = async (eps: string[]) => ({
-    vehicle: await ort.InferenceSession.create(veh, { executionProviders: eps }),
-    plate: await ort.InferenceSession.create(plate, { executionProviders: eps }),
-    ocr: await ort.InferenceSession.create(ocr, { executionProviders: eps }),
+    vehicle: await ort.InferenceSession.create(veh, { executionProviders: eps, logSeverityLevel: 3 }),
+    plate: await ort.InferenceSession.create(plate, { executionProviders: eps, logSeverityLevel: 3 }),
+    ocr: await ort.InferenceSession.create(ocr, { executionProviders: eps, logSeverityLevel: 3 }),
   });
   let backend: 'webgpu' | 'wasm' = 'wasm';
   let gpuError = '';
@@ -369,14 +381,20 @@ async function analyse(bitmap: ImageBitmap): Promise<FrameResult> {
     let plate: LiveTrack['plate'] = null;
     if (t.plateBox) {
       const read = t.evidence ? decodePlate(t.evidence, t.reads) : null;
+      // Spelled out only once settled. Replaying the recorded cam08 clip,
+      // settled plates matched the batch pipeline every time, while
+      // confident-but-unsettled reads were right only about half the time —
+      // and a wrong registration on screen invites action even with a "?"
+      // beside it. Until it settles, the plate is marked as being read.
       const confident = !!read && read.confidence >= SHOW_CONF;
+      const settled = confident && t.settled;
       plate = {
         box: t.plateBox,
-        text: confident ? read!.text : null,
-        note: confident ? null : t.plateSmall && !read ? 'too small' : 'reading',
+        text: settled ? read!.text : null,
+        note: settled ? null : t.plateSmall && !read ? 'too small' : 'reading',
         reads: Math.round(t.reads),
         confidence: read?.confidence ?? 0,
-        stable: confident && t.settled,
+        stable: settled,
       };
     }
     return { id: t.id, box: t.box, cls, score: t.score, plate };
