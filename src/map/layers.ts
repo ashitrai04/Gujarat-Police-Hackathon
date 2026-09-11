@@ -9,7 +9,7 @@
 import type * as mapboxgl from 'mapbox-gl';
 import type { GeoJSONFeatureCollection, Route } from '@/api/types';
 
-import { DOMAIN_ICON } from './icons';
+import { DOMAIN_ICON, POI_ICON, POI_KIND_TO_LAYER } from './icons';
 
 export const SRC = {
   cameras: 'sentinel-cameras',
@@ -36,6 +36,7 @@ export const LYR = {
   boundaryLine: 'boundary-line',
   boundaryFill: 'boundary-fill',
   poiPoint: 'poi-point',
+  poiIcon: 'poi-icon',
   routeLine: 'route-line',
   routeGlow: 'route-glow',
   routeStops: 'route-stops',
@@ -240,24 +241,66 @@ export function ensurePoiLayers(map: mapboxgl.Map, data: GeoJSONFeatureCollectio
   } else {
     setData(map, SRC.poi, data);
   }
+  /*
+   * Two layers, deliberately. Every facility keeps a small dot, and its icon
+   * is drawn over the dot wherever there is room for it. At state zoom there
+   * are 2,334 hospitals and 670 stations; icons for all of them would bury the
+   * map, and dropping the ones that collide would make an area look as if it
+   * had no police station when the map simply had no room to say so. The dot
+   * is the promise that the facility is there; the icon arrives as you zoom.
+   */
   if (!map.getLayer(LYR.poiPoint)) {
     map.addLayer({
       id: LYR.poiPoint,
       type: 'circle',
       source: SRC.poi,
       paint: {
-        'circle-radius': 3.2,
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2, 10, 3.2],
         'circle-color': [
           'match', ['get', 'kind'],
           'hospital', '#F472B6',
           'police', '#38BDF8',
           'fuel', '#FBBF24',
           'bus_station', '#A78BFA',
+          ['toll_booth', 'toll'], '#FB923C',
+          ['station', 'railway'], '#F87171',
           '#64748B',
         ],
-        'circle-opacity': 0.55,
+        'circle-opacity': 0.75,
         'circle-stroke-width': 0.6,
         'circle-stroke-color': 'rgba(11,18,32,0.9)',
+      },
+    });
+  }
+  if (!map.getLayer(LYR.poiIcon)) {
+    // kind -> registered image, built from the one mapping so the two can't drift.
+    const imageByKind: unknown[] = ['match', ['get', 'kind']];
+    for (const [kind, layer] of Object.entries(POI_KIND_TO_LAYER)) {
+      imageByKind.push(kind, POI_ICON[layer]);
+    }
+    imageByKind.push('');
+    map.addLayer({
+      id: LYR.poiIcon,
+      type: 'symbol',
+      source: SRC.poi,
+      layout: {
+        'icon-image': imageByKind as never,
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.32, 8, 0.46, 11, 0.62, 14, 0.8],
+        'icon-anchor': 'center',
+        'icon-allow-overlap': false,
+        'icon-padding': 1,
+        // When icons compete for space, the ones an interception depends on
+        // win: police, then toll plazas, then rail and bus, then the rest.
+        'symbol-sort-key': [
+          'match', ['get', 'kind'],
+          'police', 1,
+          ['toll_booth', 'toll'], 2,
+          ['station', 'railway'], 3,
+          'bus_station', 4,
+          'fuel', 5,
+          'hospital', 6,
+          9,
+        ],
       },
     });
   }

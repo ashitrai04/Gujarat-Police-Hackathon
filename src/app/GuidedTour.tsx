@@ -199,7 +199,7 @@ const STEPS: Step[] = [
     target: 'poi',
     title: 'Where a vehicle can be intercepted',
     desc:
-      '<b>126</b> police stations, then <b>232</b> toll plazas, then <b>741</b> '
+      '<b>103</b> police stations, then <b>201</b> toll plazas, then <b>670</b> '
       + 'railway stations, each arriving as it is named. Toll plazas earn their place '
       + 'specifically: a vehicle leaving the state passes one, which makes them the '
       + 'natural interception points on a traced route.',

@@ -24,7 +24,7 @@ import {
   setRouteProgress,
   setVisible,
 } from './layers';
-import { ensureDomainIcons } from './icons';
+import { ensureDomainIcons, ensurePoiIcons } from './icons';
 import { matchToRoads } from './roadMatch';
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
@@ -176,6 +176,7 @@ export function MapView() {
     if (!m || !styleReady.current) return;
     // Icons must exist before the symbol layer references them.
     void ensureDomainIcons(m);
+    void ensurePoiIcons(m);
     try {
 
     if (boundaries) ensureBoundaryLayers(m, boundaries);
@@ -194,6 +195,7 @@ export function MapView() {
     setVisible(m, LYR.heat, st.showHeat);
     setVisible(m, LYR.gapsFill, st.showGaps);
     setVisible(m, LYR.poiPoint, st.pois.length > 0);
+    setVisible(m, LYR.poiIcon, st.pois.length > 0);
     for (const [layer, ids] of Object.entries(GIS_LAYER_IDS)) {
       for (const id of ids) setVisible(m, id, st.gis.includes(layer as GisLayer));
     }
@@ -227,6 +229,7 @@ export function MapView() {
     setVisible(m, LYR.heat, s.showHeat);
     setVisible(m, LYR.gapsFill, s.showGaps);
     setVisible(m, LYR.poiPoint, s.pois.length > 0);
+    setVisible(m, LYR.poiIcon, s.pois.length > 0);
     for (const [layer, ids] of Object.entries(GIS_LAYER_IDS)) {
       for (const id of ids) setVisible(m, id, s.gis.includes(layer as GisLayer));
     }

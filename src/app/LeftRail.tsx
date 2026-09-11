@@ -1,17 +1,17 @@
 import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, Bus, Crosshair, Flame, Fuel, Hospital, Map as MapIcon,
-  PanelLeftClose, PanelLeftOpen, Radio, Shield, ListFilter,
+  Activity, Crosshair, Flame, Map as MapIcon,
+  PanelLeftClose, PanelLeftOpen, Radio, ListFilter,
   Route as RouteIcon, Search, Siren, Database as DatabaseIcon,
-  CircleDollarSign, TrainFront, Video,
+  Video,
 } from 'lucide-react';
 import { api } from '@/api/client';
 import { ALL_CAM_TYPES, ALL_DOMAINS, useStore, type PoiLayer } from './store';
 import { useBreakpoint } from './useBreakpoint';
 import { DOMAIN_COLOR, DOMAIN_LABEL, type CameraStatus, type Domain } from '@/api/types';
 import { Button, Empty, SectionHeader, StatusDot, ToggleRow } from '@/components/ui';
-import { DOMAIN_MARKER_SRC } from '@/map/icons';
+import { DOMAIN_MARKER_SRC, POI_MARKER_SRC } from '@/map/icons';
 import type { GisLayer } from '@/app/store';
 
 /**
@@ -26,13 +26,14 @@ const GIS_META: { key: GisLayer; label: string; colour: string; shape: 'line' | 
   { key: 'roads', label: 'Major roads', colour: '#22D3EE', shape: 'line' },
 ];
 
-const POI_META: Record<PoiLayer, { label: string; icon: typeof Hospital; colour: string }> = {
-  hospital: { label: 'Hospitals', icon: Hospital, colour: '#F472B6' },
-  police: { label: 'Police stations', icon: Shield, colour: '#38BDF8' },
-  fuel: { label: 'Fuel stations', icon: Fuel, colour: '#FBBF24' },
-  bus_station: { label: 'Bus depots', icon: Bus, colour: '#A78BFA' },
-  toll: { label: 'Toll plazas', icon: CircleDollarSign, colour: '#FB923C' },
-  railway: { label: 'Railway stations', icon: TrainFront, colour: '#22D3EE' },
+/** Colours match the dots each layer draws under its icons (map/layers.ts). */
+const POI_META: Record<PoiLayer, { label: string; colour: string }> = {
+  hospital: { label: 'Hospitals', colour: '#F472B6' },
+  police: { label: 'Police stations', colour: '#38BDF8' },
+  fuel: { label: 'Fuel stations', colour: '#FBBF24' },
+  bus_station: { label: 'Bus depots', colour: '#A78BFA' },
+  toll: { label: 'Toll plazas', colour: '#FB923C' },
+  railway: { label: 'Railway stations', colour: '#F87171' },
 };
 
 const STATUSES: CameraStatus[] = ['online', 'degraded', 'offline'];
@@ -319,7 +320,15 @@ export function LeftRail() {
               onClick={() => s.togglePoi(k)}
               colour={M.colour}
               label={M.label}
-              icon={<M.icon size={12} style={{ color: M.colour }} />}
+              icon={
+                // The exact icon the map draws, so the legend is a key to it.
+                <img
+                  src={POI_MARKER_SRC[k]}
+                  alt=""
+                  aria-hidden
+                  className="h-[18px] w-[18px] shrink-0 object-contain"
+                />
+              }
             />
           );
         })}

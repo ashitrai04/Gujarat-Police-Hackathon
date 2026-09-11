@@ -13,6 +13,7 @@
 
 import type * as mapboxgl from 'mapbox-gl';
 import type { Domain } from '@/api/types';
+import type { PoiLayer } from '@/app/store';
 
 // Vite resolves these to hashed URLs at build time.
 import trafficPng from '@/assets/markers/traffic-lights.png';
@@ -20,6 +21,12 @@ import hospitalPng from '@/assets/markers/hospital.png';
 import pdsPng from '@/assets/markers/PDS.png';
 import rtoPng from '@/assets/markers/rto.png';
 import publicPng from '@/assets/markers/safety.png';
+import poiHospitalPng from '@/assets/pois/hospital.png';
+import poiPolicePng from '@/assets/pois/police.png';
+import poiFuelPng from '@/assets/pois/fuel.png';
+import poiBusPng from '@/assets/pois/bus_station.png';
+import poiTollPng from '@/assets/pois/toll.png';
+import poiRailwayPng from '@/assets/pois/railway.png';
 
 export const DOMAIN_ICON: Record<Domain, string> = {
   traffic: 'sent-traffic',
@@ -42,6 +49,48 @@ export const DOMAIN_MARKER_SRC: Record<Domain, string> = {
 };
 
 const SRC = DOMAIN_MARKER_SRC;
+
+/*
+ * Reference facilities — hospitals, police, fuel, bus, toll, rail. Square
+ * artwork rather than pins, since these are context rather than assets the
+ * operator controls, and the difference in shape keeps a camera from being
+ * mistaken for a police station at a glance.
+ */
+export const POI_ICON: Record<PoiLayer, string> = {
+  hospital: 'poi-hospital',
+  police: 'poi-police',
+  fuel: 'poi-fuel',
+  bus_station: 'poi-bus',
+  toll: 'poi-toll',
+  railway: 'poi-railway',
+};
+
+/** The same artwork, for the legend beside each reference-layer toggle. */
+export const POI_MARKER_SRC: Record<PoiLayer, string> = {
+  hospital: poiHospitalPng,
+  police: poiPolicePng,
+  fuel: poiFuelPng,
+  bus_station: poiBusPng,
+  toll: poiTollPng,
+  railway: poiRailwayPng,
+};
+
+/**
+ * The layer a point belongs to, from the `kind` its source file gives it.
+ * The files carry OpenStreetMap's own terms — a railway point is a
+ * "station", a toll point a "toll_booth" — which is why styling keyed on the
+ * layer names alone drew those two as anonymous grey dots.
+ */
+export const POI_KIND_TO_LAYER: Record<string, PoiLayer> = {
+  hospital: 'hospital',
+  police: 'police',
+  fuel: 'fuel',
+  bus_station: 'bus_station',
+  toll_booth: 'toll',
+  toll: 'toll',
+  station: 'railway',
+  railway: 'railway',
+};
 
 /**
  * Artwork is 512px square. Registering it at that size would burn texture
@@ -91,6 +140,23 @@ export async function ensureDomainIcons(map: mapboxgl.Map): Promise<void> {
         map.addImage(id, data, { pixelRatio: PIXEL_RATIO });
       } catch {
         /* a missing marker must not stop the rest of the map loading */
+      }
+    }),
+  );
+}
+
+/** Register every reference-facility icon. Safe to call again after a style change. */
+export async function ensurePoiIcons(map: mapboxgl.Map): Promise<void> {
+  await Promise.all(
+    (Object.keys(POI_MARKER_SRC) as PoiLayer[]).map(async (layer) => {
+      const id = POI_ICON[layer];
+      if (map.hasImage(id)) return;
+      try {
+        const data = await render(POI_MARKER_SRC[layer]);
+        if (map.hasImage(id)) return;
+        map.addImage(id, data, { pixelRatio: PIXEL_RATIO });
+      } catch {
+        /* the dot beneath still marks the facility */
       }
     }),
   );
