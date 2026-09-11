@@ -19,6 +19,7 @@ import {
   ensureGapLayers,
   ensureGisLayers,
   ensurePoiLayers,
+  restack,
   ensureRouteLayers,
   ensureZoneLayers,
   setRouteProgress,
@@ -188,6 +189,7 @@ export function MapView() {
     if (cameras) ensureGapLayers(m, buildGapAreas(cameras));
     if (geo) ensureCameraLayers(m, geo);
     ensureRouteLayers(m);
+    restack(m);
 
     const st = useStore.getState();
     setVisible(m, LYR.boundaryLine, st.showBoundaries);

@@ -285,7 +285,17 @@ export function ensurePoiLayers(map: mapboxgl.Map, data: GeoJSONFeatureCollectio
       source: SRC.poi,
       layout: {
         'icon-image': imageByKind as never,
-        'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.32, 8, 0.46, 11, 0.62, 14, 0.8],
+        // Small enough to mark a facility without competing with the camera
+        // pins: about 10px at state zoom, 18px at city zoom, 24px close in.
+        // The hospital artwork is a solid disc that fills its whole square,
+        // so at the same size it reads larger than the rest and is drawn down.
+        'icon-size': [
+          'interpolate', ['linear'], ['zoom'],
+          5, ['*', 0.2, ['match', ['get', 'kind'], 'hospital', 0.82, 1]],
+          8, ['*', 0.27, ['match', ['get', 'kind'], 'hospital', 0.82, 1]],
+          11, ['*', 0.38, ['match', ['get', 'kind'], 'hospital', 0.82, 1]],
+          14, ['*', 0.5, ['match', ['get', 'kind'], 'hospital', 0.82, 1]],
+        ],
         'icon-anchor': 'center',
         'icon-allow-overlap': false,
         'icon-padding': 1,
@@ -303,6 +313,37 @@ export function ensurePoiLayers(map: mapboxgl.Map, data: GeoJSONFeatureCollectio
         ],
       },
     });
+  }
+}
+
+/* ── Stacking ────────────────────────────────────────────────────── */
+
+/*
+ * The order things are drawn in, bottom to top, for the layers that sit above
+ * the geography. Mapbox draws layers in the order they were added, and they
+ * are added whenever their data arrives — so switching the road network on
+ * after the facilities put 12,000 road lines on top of every icon, and would
+ * have done the same to the camera pins. Order is therefore enforced after
+ * every pass rather than left to arrival time.
+ *
+ *   geography (boundaries, districts, highways, roads)   — left where added
+ *   facility dots, facility icons                        — context
+ *   camera heat, clusters, pins                          — what operators act on
+ *   a traced route                                       — the current question
+ *   the drawing tool                                     — must stay usable
+ */
+const STACK_TOP = [
+  LYR.poiPoint, LYR.poiIcon,
+  LYR.heat, LYR.clusters, LYR.clusterCount, LYR.pointRing, LYR.point,
+  LYR.routeGlow, LYR.routeLine, LYR.routeStops, LYR.routeStopLabels,
+];
+
+export function restack(map: mapboxgl.Map) {
+  // Moving each to the top in turn leaves them in exactly this order.
+  for (const id of STACK_TOP) if (map.getLayer(id)) map.moveLayer(id);
+  // The polygon-select tool draws its own layers and has to stay above all.
+  for (const l of map.getStyle()?.layers ?? []) {
+    if (l.id.startsWith('gl-draw')) map.moveLayer(l.id);
   }
 }
 
