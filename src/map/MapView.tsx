@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
+import { INTRO_KEY, introWillPlay } from './intro';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
@@ -30,6 +31,19 @@ import { matchToRoads } from './roadMatch';
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
 const GUJARAT: [number, number] = [71.9, 22.6];
+const GUJARAT_BOUNDS: [[number, number], [number, number]] = [[68.1, 20.1], [74.5, 24.7]];
+/** Where the descent starts: the whole globe, India towards the middle. */
+const SPACE = { center: [76.5, 18] as [number, number], zoom: 1.25 };
+
+/* A thin atmosphere and a starfield while the map is a globe — without them
+   the Earth hangs in flat black and reads as a rendering fault. */
+const ATMOSPHERE = {
+  color: 'rgba(140, 170, 220, 0.45)',
+  'high-color': 'rgba(30, 60, 120, 0.9)',
+  'horizon-blend': 0.06,
+  'space-color': '#03060c',
+  'star-intensity': 0.35,
+} as const;
 
 /** Narrow a queried feature to its point coordinates. */
 function coordsOf(f: mapboxgl.MapboxGeoJSONFeature): [number, number] {
@@ -92,15 +106,52 @@ export function MapView() {
     };
   }, [s.gis, gis]);
 
+  /* ── Globe descent ─────────────────────────────────────────── */
+  /* While it plays the map must stay a globe; the projection effect below
+     would otherwise flatten it the moment the map is ready. */
+  const descending = useRef(false);
+  const runDescent = useCallback(
+    (m: mapboxgl.Map, to: { bounds: [[number, number], [number, number]]; delay?: number }) => {
+      descending.current = true;
+      m.stop();
+      m.setProjection('globe');
+      m.setFog(ATMOSPHERE);
+      m.jumpTo({ center: SPACE.center, zoom: SPACE.zoom, pitch: 0, bearing: 0 });
+      const target = m.cameraForBounds(to.bounds, { padding: 60 });
+      window.setTimeout(() => {
+        if (!map.current) return;
+        m.flyTo({
+          center: target?.center ?? GUJARAT,
+          zoom: target?.zoom ?? 6.4,
+          pitch: 0,
+          bearing: 0,
+          duration: 5200,
+          curve: 1.25,
+          essential: true,
+        });
+        m.once('moveend', () => {
+          descending.current = false;
+          m.setFog(null);
+          m.setProjection(useStore.getState().globe ? 'globe' : 'mercator');
+        });
+      }, to.delay ?? 400);
+    },
+    [],
+  );
+
   /* ── Init ─────────────────────────────────────────────────── */
   useEffect(() => {
     if (!ref.current || map.current || !TOKEN) return;
     mapboxgl.accessToken = TOKEN;
+    // Opening the console descends from the whole globe to the state, once a
+    // session: it says where this is before saying what is in it.
+    const descend = introWillPlay;
     const m = new mapboxgl.Map({
       container: ref.current,
       style: BASE_STYLES[s.baseStyle].url,
-      center: GUJARAT,
-      zoom: 6.4,
+      center: descend ? SPACE.center : GUJARAT,
+      zoom: descend ? SPACE.zoom : 6.4,
+      projection: descend ? 'globe' : undefined,
       attributionControl: false,
       logoPosition: 'bottom-left',
     });
@@ -147,7 +198,13 @@ export function MapView() {
       styleReady.current = true;
       setStyleTick((t) => t + 1);
     });
-    m.on('load', () => setReady(true));
+    m.on('load', () => {
+      if (descend) {
+        try { sessionStorage.setItem(INTRO_KEY, '1'); } catch { /* ignore */ }
+        runDescent(m, { bounds: GUJARAT_BOUNDS, delay: 700 });
+      }
+      setReady(true);
+    });
 
     return () => {
       m.remove();
@@ -255,7 +312,7 @@ export function MapView() {
   /* ── Globe + pitch ────────────────────────────────────────── */
   useEffect(() => {
     const m = map.current;
-    if (!m || !ready) return;
+    if (!m || !ready || descending.current) return;
     m.setProjection(s.globe ? 'globe' : 'mercator');
   }, [s.globe, ready, styleTick]);
 
@@ -403,7 +460,16 @@ export function MapView() {
     if (!s.trace || !map.current || !s.trace.stops.length) return;
     const b = new mapboxgl.LngLatBounds();
     s.trace.stops.forEach((st) => b.extend([st.lng, st.lat]));
-    map.current.fitBounds(b, { padding: 140, duration: 900, maxZoom: 11 });
+    // The trace panel is open on the right when a route is drawn; frame the
+    // route in the map left visible beside it, not under it.
+    const mapRect = map.current.getContainer().getBoundingClientRect();
+    const panel = document.querySelector('[data-tour="panel"]')?.getBoundingClientRect();
+    const cover = panel ? Math.max(0, mapRect.right - panel.left) : 0;
+    map.current.fitBounds(b, {
+      padding: { top: 120, bottom: 120, left: 120, right: 120 + cover },
+      duration: 1400,
+      maxZoom: 11,
+    });
   }, [s.trace]);
 
   /* ── Walkthrough camera ───────────────────────────────────── */
@@ -414,26 +480,52 @@ export function MapView() {
     const m = map.current;
     const v = s.tourView;
     if (!m || !ready || !v) return;
-    // Frame the subject in the part of the map that is actually visible: the
-    // walkthrough's caption covers the left (a 384px card plus margins), and
-    // an open side panel covers the right. Centring on the whole canvas put
-    // the thing being described underneath one or the other.
+    if (v.intro && v.bounds) {
+      runDescent(m, { bounds: v.bounds });
+      return;
+    }
+    // Centre the subject in the part of the map that is visible. Padding is
+    // even on every side — an offset for the caption made the subject look
+    // off-centre — except where an open side panel covers the map.
     const mapRect = m.getContainer().getBoundingClientRect();
     const panel = document.querySelector('[data-tour="panel"]')?.getBoundingClientRect();
     const panelCover = panel ? Math.max(0, mapRect.right - panel.left) : 0;
-    const padding = { top: 50, bottom: 50, left: 430, right: Math.max(50, panelCover + 30) };
-    // Never pad away more than the map has, or Mapbox refuses the move.
-    if (padding.left + padding.right > mapRect.width - 120) {
-      padding.left = Math.max(20, mapRect.width - 120 - padding.right);
-    }
-    const opts = { padding, pitch: v.pitch ?? 0, duration: 1800, essential: true, curve: 1.5 };
-    if (v.bounds) {
-      m.fitBounds(v.bounds, opts);
-      return;
-    }
-    if (v.lng == null || v.lat == null) return;
-    m.flyTo({ ...opts, center: [v.lng, v.lat], zoom: v.zoom ?? m.getZoom() });
-  }, [s.tourView, ready]);
+    const padding = { top: 60, bottom: 60, left: 60, right: 60 + panelCover };
+    if (padding.left + padding.right > mapRect.width - 160) padding.right = Math.max(60, mapRect.width - 220);
+
+    const target = v.bounds
+      ? m.cameraForBounds(v.bounds, { padding })
+      : v.lng != null && v.lat != null ? { center: [v.lng, v.lat] as [number, number], zoom: v.zoom } : null;
+    if (!target) return;
+
+    // flyTo rather than a straight ease: between distant places it pulls
+    // back and swoops in, which is what makes a jump from Ahmedabad to Surat
+    // read as travel rather than a cut. Speed, not a fixed duration, so a
+    // short hop is quick and a long one takes the time it needs.
+    m.flyTo({
+      center: target.center,
+      zoom: target.zoom ?? m.getZoom(),
+      pitch: v.pitch ?? 0,
+      bearing: v.bearing ?? 0,
+      padding,
+      speed: 0.85,
+      curve: 1.55,
+      maxDuration: 4200,
+      essential: true,
+    });
+
+    // A held view turns slowly, so a city being described stays alive
+    // instead of freezing under the caption.
+    if (!v.orbit) return;
+    const orbit = () => m.easeTo({
+      bearing: m.getBearing() + 16,
+      duration: 9000,
+      easing: (t) => t,
+      essential: true,
+    });
+    m.once('moveend', orbit);
+    return () => { m.off('moveend', orbit); };
+  }, [s.tourView, ready, runDescent]);
 
   /* ── Alert focus: fly in and pulse the pin ────────────────── */
   useEffect(() => {

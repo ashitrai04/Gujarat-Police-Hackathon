@@ -4,6 +4,7 @@ import { api, subscribeAlerts } from '@/api/client';
 import { MapView } from '@/map/MapView';
 import { GuidedTour, tourUnseen } from './GuidedTour';
 import { Boundary } from '@/components/Boundary';
+import { INTRO_MS, introWillPlay } from '@/map/intro';
 import { CommandBar } from './CommandBar';
 import { LeftRail } from './LeftRail';
 import { RightPanel } from './RightPanel';
@@ -38,7 +39,13 @@ export function App() {
       .sort((a, b) => (b.bitsPerPixel ?? 0) - (a.bitsPerPixel ?? 0))
       .slice(0, 6)
       .map((c) => c.id);
-    if (defaults.length) addToWall(defaults);
+    if (!defaults.length) return;
+    // Not across the opening descent: the dock would cover half of it.
+    if (!introWillPlay) { addToWall(defaults); return; }
+    const t = setTimeout(() => {
+      if (useStore.getState().wallCameraIds.length === 0) addToWall(defaults);
+    }, INTRO_MS);
+    return () => clearTimeout(t);
   }, [allCams, addToWall]);
 
   useEffect(() => {
@@ -68,7 +75,8 @@ export function App() {
   const [tourOpen, setTourOpen] = useState(false);
   useEffect(() => {
     if (!tourUnseen()) return;
-    const t = setTimeout(() => setTourOpen(true), 2600);
+    // After the opening descent, not on top of it.
+    const t = setTimeout(() => setTourOpen(true), introWillPlay ? INTRO_MS + 600 : 2600);
     return () => clearTimeout(t);
   }, []);
   const closeTour = useCallback(() => setTourOpen(false), []);

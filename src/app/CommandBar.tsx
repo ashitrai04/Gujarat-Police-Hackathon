@@ -87,7 +87,7 @@ export function CommandBar() {
 
       {/* Map view switcher */}
       <div className="relative">
-        <Button onClick={() => setStyleOpen((v) => !v)} aria-expanded={styleOpen}>
+        <Button data-tour="style" onClick={() => setStyleOpen((v) => !v)} aria-expanded={styleOpen}>
           <Layers size={13} />
           {!tight && BASE_STYLES[s.baseStyle].label}
         </Button>
@@ -95,6 +95,7 @@ export function CommandBar() {
           <>
             <div className="fixed inset-0 z-40" onClick={() => setStyleOpen(false)} />
             <div
+              data-tour="style-menu"
               className="anim-fade-up absolute left-0 top-full z-50 mt-1 w-[168px] overflow-hidden rounded-[8px] py-1"
               style={{
                 background: 'var(--surface)',
@@ -105,6 +106,7 @@ export function CommandBar() {
               {(Object.keys(BASE_STYLES) as BaseStyle[]).map((k) => (
                 <button
                   key={k}
+                  data-tour={`style-${k}`}
                   onClick={() => {
                     s.setBaseStyle(k);
                     setStyleOpen(false);
@@ -123,6 +125,7 @@ export function CommandBar() {
 
       {/* 3D controls */}
       <Button
+        data-tour="globe"
         onClick={s.toggleGlobe}
         title="Globe projection"
         style={{
@@ -133,6 +136,7 @@ export function CommandBar() {
         <Globe size={13} />
       </Button>
       <Button
+        data-tour="tilt"
         onClick={() => s.setPitch(s.pitch > 0 ? 0 : 55)}
         title="Tilt to 3D view"
         style={{

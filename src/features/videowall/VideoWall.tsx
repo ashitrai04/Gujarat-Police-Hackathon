@@ -232,6 +232,7 @@ export function VideoWall() {
           {LAYOUTS.map((l) => (
             <button
               key={l.n}
+              data-tour={`layout-${l.n}`}
               onClick={() => setWallLayout(l.n)}
               title={l.label}
               className="rounded-[5px] p-1.5 transition-colors"

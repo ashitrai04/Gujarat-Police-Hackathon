@@ -181,12 +181,13 @@ function BulkImport() {
       <div className="flex flex-wrap items-center gap-2">
         <input
           ref={fileRef}
+          data-tour="bulk-file"
           type="file"
           accept=".csv,.tsv,.txt,.xlsx,.xls"
           className="hidden"
           onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
         />
-        <Button onClick={() => fileRef.current?.click()}>
+        <Button data-tour="bulk-choose" onClick={() => fileRef.current?.click()}>
           <Upload size={13} /> Choose CSV or Excel
         </Button>
         <Button onClick={seedFromGrid} disabled={!DB_READY || busy}>

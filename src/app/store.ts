@@ -43,11 +43,17 @@ export type PoiLayer =
 export type TourView = {
   k: number;
   pitch?: number;
+  /** Compass heading in degrees; 0 is north up. */
+  bearing?: number;
   /** South-west and north-east corners, [lng, lat]. Wins over a point. */
   bounds?: [[number, number], [number, number]];
   lng?: number;
   lat?: number;
   zoom?: number;
+  /** Turn slowly after arriving, so a held view stays alive. */
+  orbit?: boolean;
+  /** Start from the whole globe and descend to the target. */
+  intro?: boolean;
 };
 
 export type GisLayer = 'state' | 'districts' | 'highways' | 'roads';

@@ -41,6 +41,8 @@ interface Ctx {
   type(sel: string, text: string): Promise<boolean>;
   /** Pick an option in a select. */
   choose(sel: string, value: string): Promise<boolean>;
+  /** Hand a file to a file input, as if it had been picked in the dialog. */
+  upload(sel: string, file: File): Promise<boolean>;
   /** Light these regions; the first is the one the cursor is working on. */
   light(regions: string[]): Promise<void>;
   /** Replace the caption text, e.g. when an action could not be completed. */
@@ -75,16 +77,28 @@ function resolve(sel: string): HTMLElement | null {
    reference layer flies to where that facility is densest, so the map is
    seen filling up rather than finding one icon in open country. */
 const GUJARAT = { bounds: [[68.1, 20.1], [74.5, 24.7]] as [[number, number], [number, number]] };
-const SAURASHTRA = { lng: 70.8, lat: 22.2, zoom: 8.1 };
-const JUNAGADH = { lng: 70.4579, lat: 21.5222, zoom: 14.6 };
-const FLIGHTS: Record<PoiLayer, { lng: number; lat: number; zoom: number }> = {
-  police: { lng: 72.579, lat: 23.045, zoom: 11.8 },       // Ahmedabad, 35 in view
-  bus_station: { lng: 72.624, lat: 22.969, zoom: 10.8 },  // Ahmedabad, 18
-  toll: { lng: 72.934, lat: 22.674, zoom: 9.3 },          // Ahmedabad–Vadodara corridor, 92
-  fuel: { lng: 73.185, lat: 22.302, zoom: 11.4 },         // Vadodara, 63
-  railway: { lng: 72.925, lat: 21.204, zoom: 10.6 },      // Surat, 105
-  hospital: { lng: 72.825, lat: 21.187, zoom: 12.2 },     // Surat, 272
+const SAURASHTRA = { lng: 70.8, lat: 22.2, zoom: 8.3, pitch: 38, bearing: -12, orbit: true };
+const JUNAGADH = { lng: 70.4579, lat: 21.5222, zoom: 15, pitch: 52, bearing: 24, orbit: true };
+type Flight = { lng: number; lat: number; zoom: number; pitch: number; bearing: number; orbit: true };
+/* City views are tilted and turn slowly while held; the heading differs from
+   flight to flight so consecutive views do not look like the same shot. */
+const FLIGHTS: Record<PoiLayer, Flight> = {
+  police: { lng: 72.579, lat: 23.045, zoom: 12, pitch: 48, bearing: -18, orbit: true },       // Ahmedabad, 35 in view
+  bus_station: { lng: 72.624, lat: 22.969, zoom: 11, pitch: 42, bearing: 22, orbit: true },   // Ahmedabad, 18
+  toll: { lng: 72.934, lat: 22.674, zoom: 9.4, pitch: 36, bearing: -34, orbit: true },        // Ahmedabad–Vadodara corridor, 92
+  fuel: { lng: 73.185, lat: 22.302, zoom: 11.6, pitch: 46, bearing: 26, orbit: true },        // Vadodara, 63
+  railway: { lng: 72.925, lat: 21.204, zoom: 10.8, pitch: 40, bearing: -14, orbit: true },    // Surat, 105
+  hospital: { lng: 72.825, lat: 21.187, zoom: 12.4, pitch: 54, bearing: 12, orbit: true },    // Surat, 272
 };
+
+/* The spreadsheet the bulk-import step hands to the importer: headers as a
+   department actually writes them, none of them the registry's own names. */
+const SAMPLE_SHEET = [
+  'Device Identifier,Installed At,Owning Department,Taluka,GPS Lat,GPS Long,Live URL,Camera Kind,Make,Date of Installation',
+  'RTO-GNR-101,Adalaj Toll Plaza North Lane,rto,Gandhinagar,23.1866,72.5601,,fixed,CP Plus,2024-03-14',
+  'RTO-GNR-102,Dehgam Check Post Inbound,rto,Dehgam,23.1675,72.8161,,ptz,Hikvision,2023-11-02',
+  'RTO-GNR-103,Chiloda Circle,rto,Gandhinagar,23.2946,72.7410,,fixed,Dahua,2024-07-21',
+].join('\n');
 
 /** A registration this estate has actually read, and that is on the watchlist. */
 const DEMO_PLATE = 'GJ03PA8482';
@@ -119,6 +133,8 @@ type Snapshot = {
   showHeat: boolean;
   showGaps: boolean;
   wall: string[];
+  baseStyle: StoreState['baseStyle'];
+  pitch: number;
 };
 let saved: Snapshot | null = null;
 
@@ -133,6 +149,8 @@ function clearLayers(set: StoreState) {
       showHeat: now.showHeat,
       showGaps: now.showGaps,
       wall: [...now.wallCameraIds],
+      baseStyle: now.baseStyle,
+      pitch: now.pitch,
     };
   }
   now.gis.forEach((g) => set.toggleGis(g));
@@ -173,6 +191,8 @@ function restoreView(qc: QueryClient) {
   if (now.showHeat !== want.showHeat) now.toggleHeat();
   if (now.showGaps !== want.showGaps) now.toggleGaps();
   now.setWall(want.wall);
+  if (now.baseStyle !== want.baseStyle) now.setBaseStyle(want.baseStyle);
+  if (now.pitch !== want.pitch) now.setPitch(want.pitch);
   now.setTrace(null);
   now.setFocusCamera(null);
   now.closePanel();
@@ -210,7 +230,36 @@ const STEPS: Step[] = [
       c.set.setDockOpen(false);
       c.set.setTrace(null);
       clearLayers(c.set);
-      c.set.setTourView(GUJARAT);
+      c.set.setTourView({ ...GUJARAT, intro: true });
+    },
+  },
+  {
+    id: 'views',
+    title: 'Map views, and 3D',
+    desc:
+      'The base map changes to suit the job: <b>dark</b> for a night watch where the '
+      + 'overlays must glow, <b>streets</b> for addresses, <b>satellite</b> for what is '
+      + 'actually on the ground. <b>3D</b> tilts the map so a junction is read the way '
+      + 'the camera sees it.',
+    hold: 3600,
+    early: true,
+    light: ['style', 'style-menu', 'map'],
+    run: async (c) => {
+      const home = c.set.baseStyle;
+      for (const next of ['dark', 'streets'] as const) {
+        if (next === home) continue;
+        await c.click('style');
+        await c.wait(250);
+        await c.click(`style-${next}`);
+        await c.wait(1700);
+      }
+      await c.click('style');
+      await c.wait(250);
+      await c.click(`style-${home === 'dark' || home === 'streets' ? 'satellite' : home}`);
+      await c.wait(900);
+      await c.click('tilt');
+      await c.wait(2600);
+      await c.click('tilt');
     },
   },
   {
@@ -317,15 +366,22 @@ const STEPS: Step[] = [
     id: 'wall',
     title: 'The camera grid',
     desc:
-      'The wall opens as its own screen. Tiles stay uniform, playable cameras sort '
-      + 'first, and a feed that cannot be reached falls back to recorded footage, '
-      + 'labelled <b>RECORDED</b> and never passed off as live.',
-    hold: 5600,
+      'The wall opens as its own screen, one feed large, four up, or filling the space. '
+      + 'Tiles stay uniform, playable cameras sort first, and a feed that cannot be '
+      + 'reached falls back to recorded footage, labelled <b>RECORDED</b>.',
+    hold: 4200,
+    early: true,
     light: ['wall', 'dock'],
     run: async (c) => {
       c.set.closePanel();
       c.set.setWall(['cam08', 'cam10', 'cam01', 'cam05']);
       await c.click('wall');
+      await c.wait(900);
+      // The layouts: one feed large, a 2×2 grid, then back to filling the space.
+      for (const n of [1, 4, 0]) {
+        await c.click(`layout-${n}`);
+        await c.wait(1300);
+      }
     },
   },
   {
@@ -414,10 +470,42 @@ const STEPS: Step[] = [
     run: async (c) => { await c.click('health'); },
   },
 
-  /* Onboarding, end to end, then undone. */
+  /* Onboarding: three routes in, the last one end to end and then undone. */
+  {
+    id: 'onboard-bulk',
+    title: 'Tool 5, onboarding by spreadsheet',
+    desc:
+      'Departments already keep their camera lists in spreadsheets, and none of them '
+      + 'name the columns alike. Handed an RTO sheet headed <b>Device Identifier</b>, '
+      + '<b>Installed At</b>, <b>GPS Lat</b>, <b>Live URL</b>, the importer matches every '
+      + 'column to the registry itself and shows the mapping before anything is saved.',
+    hold: 5200,
+    early: true,
+    light: ['panel'],
+    run: async (c) => {
+      await c.click('registry');
+      await c.wait(600);
+      await c.click('tab-bulk');
+      await c.wait(400);
+      await c.point('bulk-choose');
+      await c.upload('bulk-file', new File([SAMPLE_SHEET], 'rto-gandhinagar-cameras.csv', { type: 'text/csv' }));
+      await c.wait(900);
+    },
+  },
+  {
+    id: 'onboard-api',
+    title: 'Onboarding over the API',
+    desc:
+      'A department\'s own system can push cameras straight into the registry. It is '
+      + 'the same table the map and the wall read, so a camera sent this way is on the '
+      + 'map at once, with no import step between.',
+    hold: 5000,
+    light: ['panel'],
+    run: async (c) => { await c.click('tab-api'); },
+  },
   {
     id: 'onboard',
-    title: 'Tool 5, onboarding a camera',
+    title: 'Onboarding by hand',
     desc:
       'Manual entry, filled in as a department would: an ID, a name, where it is, and '
       + 'the stream it serves. The example borrows Majevadi Gate\'s stream so it has a '
@@ -426,8 +514,6 @@ const STEPS: Step[] = [
     early: true,
     light: ['panel'],
     run: async (c) => {
-      await c.click('registry');
-      await c.wait(600);
       await c.click('tab-manual');
       await c.wait(400);
       const f = (n: string) => `[data-tour="panel"] [name="${n}"]`;
@@ -478,7 +564,7 @@ const STEPS: Step[] = [
       c.set.openPanel({ kind: 'camera', cameraId: DEMO_CAM.id });
       c.set.setFocusCamera(DEMO_CAM.id);
       await c.wait(300);
-      c.set.setTourView({ lng: Number(DEMO_CAM.lng), lat: Number(DEMO_CAM.lat), zoom: 15.4 });
+      c.set.setTourView({ lng: Number(DEMO_CAM.lng), lat: Number(DEMO_CAM.lat), zoom: 15.6, pitch: 50, bearing: -20, orbit: true });
     },
   },
   {
@@ -721,6 +807,16 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
         el.blur();
         return true;
       },
+      upload: async (sel, file) => {
+        if (!live) return false;
+        const el = resolve(sel) as HTMLInputElement | null;
+        if (!el || el.type !== 'file') return false;
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        el.files = dt.files;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      },
       choose: async (sel, value) => {
         if (!live) return false;
         const el = (await reveal(sel)) as HTMLSelectElement | null;
@@ -860,8 +956,10 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
   // The caption stays beside the step's first control, and never sits on a
   // lit panel or dock it is describing. Only regions that fill most of the
   // screen — the map, the full-screen grid — are allowed under it.
+  // The control being worked is always kept clear too — a caption over the
+  // very button the cursor is pressing hides the demonstration.
   const avoid = regions
-    .filter((r) => r.key !== focusKey.current && r.rect.width * r.rect.height < W * H * 0.5)
+    .filter((r) => r.rect.width * r.rect.height < W * H * 0.5)
     .map((r) => r.rect);
   const pos = captionPosition(anchorRect, captionH, avoid);
 
@@ -1045,14 +1143,15 @@ function captionPosition(rect: DOMRect | null, height: number, avoid: DOMRect[] 
     const mapLeft = document.querySelector('[data-tour="map"]')?.getBoundingClientRect().left ?? 0;
     x = Math.max(M, mapLeft + M);
     y = Math.max(M, vh - H - 36);
-  } else if (rect.width < 320) {
-    // A narrow control gets the caption alongside it, level with its middle —
-    // to the right if there is room, otherwise to the left.
+  } else if (rect.width < 320 && rect.right < 320) {
+    // A control in the left rail gets the caption alongside it, level with
+    // its middle, out over the map.
     y = clampY(rect.top + rect.height / 2 - H / 2);
-    x = rect.right + M + W <= vw - M ? rect.right + M : Math.max(M, rect.left - W - M);
+    x = rect.right + M;
   } else {
-    // A wide control keeps the caption under it, flipping above when there is
-    // no room below.
+    // Anything else — the top bar, a panel — keeps the caption under it,
+    // flipping above when there is no room below. Beside a top-bar button
+    // it would sit across its neighbours, which the tour clicks next.
     y = rect.bottom + M;
     if (y + H > vh - M) y = rect.top - H - M;
     y = clampY(y);
