@@ -1,3 +1,4 @@
+import { refreshCameras } from '@/api/client';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import Papa from 'papaparse';
@@ -39,6 +40,7 @@ export function OnboardingPanel() {
         ] as const).map(([k, label, Icon]) => (
           <button
             key={k}
+            data-tour={`tab-${k}`}
             onClick={() => setTab(k)}
             className="flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-[12px] transition-colors"
             style={{
@@ -152,7 +154,7 @@ function BulkImport() {
         good.map((r) => ({ ...r.data, source: 'csv' } as CameraInput)),
       );
       setResult(`${n} camera${n === 1 ? '' : 's'} written to the registry.`);
-      await qc.invalidateQueries({ queryKey: ['cameras.all'] });
+      await refreshCameras(qc);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -166,7 +168,7 @@ function BulkImport() {
     try {
       const n = await importFromGrid();
       setResult(`${n} cameras imported from the live grid.`);
-      await qc.invalidateQueries({ queryKey: ['cameras.all'] });
+      await refreshCameras(qc);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -371,7 +373,7 @@ function ManualEntry() {
       await upsertCameras([{ ...form, source: 'manual' }]);
       setMsg(`${form.id} saved to the registry.`);
       setForm(BLANK);
-      await qc.invalidateQueries({ queryKey: ['cameras.all'] });
+      await refreshCameras(qc);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -385,53 +387,58 @@ function ManualEntry() {
       {msg && <Notice tone="signal"><Check size={12} /> {msg}</Notice>}
 
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Camera ID *" value={form.id} onChange={(v) => set('id', v)} mono />
-        <Field label="Name / location *" value={form.name} onChange={(v) => set('name', v)} />
+        <Field name="id" label="Camera ID *" value={form.id} onChange={(v) => set('id', v)} mono />
+        <Field name="name" label="Name / location *" value={form.name} onChange={(v) => set('name', v)} />
         <Select
+          name="department_id"
           label="Department"
           value={form.department_id ?? ''}
           onChange={(v) => set('department_id', v)}
           options={['police', 'traffic', 'health', 'pds', 'rto', 'municipal']}
         />
-        <Field label="District" value={form.district ?? ''} onChange={(v) => set('district', v)} />
+        <Field name="district" label="District" value={form.district ?? ''} onChange={(v) => set('district', v)} />
         <Select
+          name="cam_type"
           label="Camera type"
           value={form.cam_type ?? 'fixed'}
           onChange={(v) => set('cam_type', v)}
           options={['fixed', 'ptz', 'anpr', 'overview']}
         />
         <Select
+          name="status"
           label="Status"
           value={form.status ?? 'unknown'}
           onChange={(v) => set('status', v)}
           options={['unknown', 'online', 'offline', 'degraded', 'maintenance']}
         />
         <Field
-          label="Latitude" mono value={form.lat == null ? '' : String(form.lat)}
+          name="lat" label="Latitude" mono value={form.lat == null ? '' : String(form.lat)}
           onChange={(v) => set('lat', v === '' ? null : Number(v))}
         />
         <Field
-          label="Longitude" mono value={form.lng == null ? '' : String(form.lng)}
+          name="lng" label="Longitude" mono value={form.lng == null ? '' : String(form.lng)}
           onChange={(v) => set('lng', v === '' ? null : Number(v))}
         />
       </div>
 
-      <Field label="HLS / stream URL" mono value={form.hls_url ?? ''} onChange={(v) => set('hls_url', v)} />
+      <Field name="hls_url" label="HLS / stream URL" mono value={form.hls_url ?? ''} onChange={(v) => set('hls_url', v)} />
       <Field label="RTSP URL" mono value={form.rtsp_url ?? ''} onChange={(v) => set('rtsp_url', v)} />
       <Field label="Vendor / make" value={form.vendor ?? ''} onChange={(v) => set('vendor', v)} />
       <Field
+        name="tags"
         label="Tags (comma separated)"
         value={(form.tags ?? []).join(', ')}
         onChange={(v) => set('tags', v.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean))}
       />
 
       <div className="flex items-center gap-2 pt-1">
-        <Button onClick={save} disabled={!DB_READY || busy}>
+        <Button data-tour="add-camera" onClick={save} disabled={!DB_READY || busy}>
           {busy ? <Spinner size={12} /> : <Plus size={13} />} Add camera
         </Button>
         <label className="flex items-center gap-1.5 text-[11.5px]" style={{ color: 'var(--text)' }}>
           <input
             type="checkbox"
+            name="anpr_capable"
             checked={!!form.anpr_capable}
             onChange={(e) => set('anpr_capable', e.target.checked)}
           />
@@ -443,14 +450,15 @@ function ManualEntry() {
 }
 
 function Field({
-  label, value, onChange, mono,
-}: { label: string; value: string; onChange: (v: string) => void; mono?: boolean }) {
+  label, value, onChange, mono, name,
+}: { label: string; value: string; onChange: (v: string) => void; mono?: boolean; name?: string }) {
   return (
     <label className="block">
       <span className="mb-1 block text-[10.5px] uppercase tracking-wide" style={{ color: 'var(--text-mute)' }}>
         {label}
       </span>
       <input
+        name={name}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={`w-full rounded-[5px] px-2 py-1.5 text-[12px] ${mono ? 'mono' : ''}`}
@@ -461,14 +469,15 @@ function Field({
 }
 
 function Select({
-  label, value, onChange, options,
-}: { label: string; value: string; onChange: (v: string) => void; options: string[] }) {
+  label, value, onChange, options, name,
+}: { label: string; value: string; onChange: (v: string) => void; options: string[]; name?: string }) {
   return (
     <label className="block">
       <span className="mb-1 block text-[10.5px] uppercase tracking-wide" style={{ color: 'var(--text-mute)' }}>
         {label}
       </span>
       <select
+        name={name}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-[5px] px-2 py-1.5 text-[12px]"

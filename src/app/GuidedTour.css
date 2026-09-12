@@ -112,36 +112,43 @@
 }
 .tour-btn-start:hover { filter: brightness(1.1); }
 
-/* ── Spotlight ───────────────────────────────────────────────────── */
+/* ── Highlight ───────────────────────────────────────────────────── */
 
-/* One element, not four panels: an enormous spread shadow dims everything
-   outside the ring, so the highlighted control keeps its true colours while
-   the rest of the interface recedes. It also animates as a single box, which
-   is what makes the spotlight glide between steps instead of jumping.
+/* The shade is an SVG mask with a hole cut for every lit region, so several
+   things can be lit at once — the control being clicked AND the panel or map
+   it acts on. It is a static layer: it repaints only when what is lit changes,
+   never per frame. (An earlier single-box spotlight dimmed with a 9999px
+   box-shadow; pulsing that shadow repainted the whole viewport every frame.) */
+.tour-shade {
+  position: absolute;
+  inset: 0;
+  animation: tour-fade 0.4s ease both;
+}
 
-   The shade is deliberately light. Most steps are describing something the
-   map is doing — a layer appearing, a route drawing — and a shade heavy
-   enough to make the highlight pop also hides the thing being demonstrated,
-   which leaves the walkthrough talking about a black rectangle. */
-.tour-spotlight {
+/* Holes glide between steps. x/y/width/height are CSS properties on SVG rects
+   in current browsers; where they are not, the holes simply move without
+   the glide. */
+.tour-hole {
+  transition: x 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+              y 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+              width 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+              height 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The control the cursor is working on. */
+.tour-ring {
   position: absolute;
   border-radius: 10px;
   border: 2px solid var(--signal);
-  /* Static. This shadow's 9999px spread is what dims the screen, so anything
-     that changes it — a transition, a keyframe — repaints the entire viewport
-     on every frame, over a WebGL map that is already busy. An earlier version
-     pulsed it and the tour stuttered badly enough that captions reached the
-     screen seconds after their clock had started. */
-  box-shadow: 0 0 0 9999px rgba(4, 8, 15, 0.46);
-  transition: top 0.55s cubic-bezier(0.16, 1, 0.3, 1),
-              left 0.55s cubic-bezier(0.16, 1, 0.3, 1),
-              width 0.55s cubic-bezier(0.16, 1, 0.3, 1),
-              height 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: top 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+              left 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+              width 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+              height 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* The glow lives on its own layer and pulses with opacity and scale only —
+/* Its glow lives on its own layer and pulses with opacity and scale only —
    properties the compositor animates without repainting anything. */
-.tour-spotlight::after {
+.tour-ring::after {
   content: '';
   position: absolute;
   inset: -2px;
@@ -151,14 +158,16 @@
   animation: tour-breathe 2.4s ease-in-out infinite;
 }
 
-.tour-backdrop {
-  position: absolute;
-  inset: 0;
-  /* Lighter still: a step with no target is talking about the whole map. */
-  background: rgba(4, 8, 15, 0.34);
-  animation: tour-fade 0.4s ease both;
+/* A lit area the step acts on — the map, a panel, the wall. Outlined so its
+   edge reads against the shade, but quieter than the control: the eye should
+   go to the control first, then to what it changed. */
+.tour-ring-area {
+  border-width: 1.5px;
+  border-color: rgba(45, 212, 191, 0.55);
 }
-
+.tour-ring-area::after {
+  content: none;
+}
 
 /* ── Cursor ──────────────────────────────────────────────────────── */
 
@@ -291,9 +300,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tour-spotlight, .tour-cursor, .tour-caption { transition: none; }
-  .tour-spotlight::after { animation: none; }
-  .tour-welcome, .tour-welcome-card, .tour-caption.enter, .tour-backdrop {
+  .tour-ring, .tour-hole, .tour-cursor, .tour-caption { transition: none; }
+  .tour-ring::after { animation: none; }
+  .tour-welcome, .tour-welcome-card, .tour-caption.enter, .tour-shade {
     animation: none;
   }
   .tour-ripple { display: none; }

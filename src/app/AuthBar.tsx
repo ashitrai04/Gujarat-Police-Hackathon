@@ -1,3 +1,4 @@
+import { refreshCameras } from '@/api/client';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -56,7 +57,7 @@ export function AuthBar() {
         <button
           onClick={async () => {
             await signOut();
-            await qc.invalidateQueries({ queryKey: ['cameras.all'] });
+            await refreshCameras(qc);
           }}
           title="Sign out"
           className="ml-0.5 rounded-[4px] p-1 transition-colors hover:bg-[var(--surface-2)]"
@@ -96,7 +97,7 @@ function AuthDialog({ onClose }: { onClose: () => void }) {
     try {
       if (mode === 'in') {
         await signIn(email, password);
-        await qc.invalidateQueries({ queryKey: ['cameras.all'] });
+        await refreshCameras(qc);
         onClose();
       } else {
         await signUp(email, password, name);

@@ -28,6 +28,7 @@ export function RightPanel() {
 
   return (
     <aside
+      data-tour="panel"
       className="anim-slide-in z-20 flex h-full shrink-0 flex-col"
       style={{
         width: 'min(var(--panel-w), 100vw)',

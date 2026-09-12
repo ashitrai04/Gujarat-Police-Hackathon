@@ -414,26 +414,25 @@ export function MapView() {
     const m = map.current;
     const v = s.tourView;
     if (!m || !ready || !v) return;
+    // Frame the subject in the part of the map that is actually visible: the
+    // walkthrough's caption covers the left (a 384px card plus margins), and
+    // an open side panel covers the right. Centring on the whole canvas put
+    // the thing being described underneath one or the other.
+    const mapRect = m.getContainer().getBoundingClientRect();
+    const panel = document.querySelector('[data-tour="panel"]')?.getBoundingClientRect();
+    const panelCover = panel ? Math.max(0, mapRect.right - panel.left) : 0;
+    const padding = { top: 50, bottom: 50, left: 430, right: Math.max(50, panelCover + 30) };
+    // Never pad away more than the map has, or Mapbox refuses the move.
+    if (padding.left + padding.right > mapRect.width - 120) {
+      padding.left = Math.max(20, mapRect.width - 120 - padding.right);
+    }
+    const opts = { padding, pitch: v.pitch ?? 0, duration: 1800, essential: true, curve: 1.5 };
     if (v.bounds) {
-      // The walkthrough's caption occupies the left of the map (384px card
-      // plus margins), so the subject is framed in the space to its right
-      // rather than edge to edge underneath it.
-      m.fitBounds(v.bounds, {
-        padding: { top: 40, bottom: 40, left: 430, right: 50 },
-        pitch: v.pitch ?? 0,
-        duration: 1500,
-        essential: true,
-      });
+      m.fitBounds(v.bounds, opts);
       return;
     }
     if (v.lng == null || v.lat == null) return;
-    m.flyTo({
-      center: [v.lng, v.lat],
-      zoom: v.zoom ?? m.getZoom(),
-      pitch: v.pitch ?? 0,
-      duration: 1500,
-      essential: true,
-    });
+    m.flyTo({ ...opts, center: [v.lng, v.lat], zoom: v.zoom ?? m.getZoom() });
   }, [s.tourView, ready]);
 
   /* ── Alert focus: fly in and pulse the pin ────────────────── */
@@ -480,5 +479,5 @@ export function MapView() {
     );
   }
 
-  return <div ref={ref} className="h-full w-full" />;
+  return <div ref={ref} data-tour="map" className="h-full w-full" />;
 }

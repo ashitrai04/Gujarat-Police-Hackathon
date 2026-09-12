@@ -207,6 +207,7 @@ export function DetectionView({
           {(['live', 'archive'] as const).map((s) => (
             <button
               key={s}
+              data-tour={`source-${s}`}
               onClick={() => setSource(s)}
               className="rounded-[4px] px-1.5 py-[2px] font-medium"
               style={{
@@ -218,11 +219,6 @@ export function DetectionView({
               {s === 'live' ? 'Live feed' : `Recorded · ${ARCHIVE_DATE}`}
             </button>
           ))}
-          {source === 'live' && live.result && live.result.frame.w < 1280 && (
-            <span className="ml-auto truncate" style={{ color: 'var(--alert)' }} title="Plates need roughly 70px to read; at this resolution they are about half that.">
-              feed is {live.result.frame.w}×{live.result.frame.h} — too low to read plates
-            </span>
-          )}
         </div>
       )}
 
@@ -437,10 +433,7 @@ function LiveStatus({
 
       {on && (
         <p className="text-[9.5px] leading-snug" style={{ color: 'var(--text-mute)' }}>
-          Runs in this browser on the frames shown. A plate is spelled out only once it is wide
-          enough to read and has held steady across several reads; until then it is marked
-          "reading plate…", never guessed. A lighter model than the recorded pipeline, so it
-          reads fewer plates — confirm one by eye before acting on it.
+          Runs in this browser on the frames shown. Confirm a plate by eye before acting on it.
         </p>
       )}
     </div>

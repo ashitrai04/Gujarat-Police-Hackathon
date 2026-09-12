@@ -162,6 +162,7 @@ export function VideoWall() {
 
   return (
     <section
+      data-tour="dock"
       className={
         wallFullscreen
           ? 'fixed z-[70] flex flex-col overflow-hidden'
@@ -368,7 +369,7 @@ function Tile({
   const plate = latest?.[0]?.plate;
 
   return (
-    <div className="group relative h-full w-full min-h-0">
+    <div data-tour={`tile-${camera.id}`} className="group relative h-full w-full min-h-0">
       <CameraPlayer
         camera={camera}
         className="h-full w-full"

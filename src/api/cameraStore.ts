@@ -136,10 +136,49 @@ export interface CameraInput {
   source?: 'manual' | 'csv' | 'api' | 'grid';
 }
 
+/** Which map layer (and pin) a department's camera belongs to. */
+const DOMAIN_BY_DEPARTMENT: Record<string, Domain> = {
+  traffic: 'traffic',
+  health: 'hospital',
+  pds: 'pds',
+  rto: 'rto',
+  municipal: 'public',
+  police: 'public',
+};
+
+/*
+ * Optional reference and text columns. An empty form field arrives as '', and
+ * for the two that are foreign keys that is not "none" but a reference to a
+ * row called '' — which does not exist. zone_id references a zones table that
+ * holds no rows, so every manual entry was refused with a foreign-key error
+ * until the blank became null.
+ */
+const OPTIONAL = [
+  'department_id', 'zone_id', 'district', 'hls_url', 'rtsp_url', 'onvif_url',
+  'vendor', 'commissioned_on', 'last_serviced_on',
+] as const;
+
 function toRow(c: CameraInput) {
   const { lat, lng, ...rest } = c;
-  return { ...rest, geom: toGeom(lat ?? null, lng ?? null) };
+  const row: Record<string, unknown> = { ...rest };
+  for (const k of OPTIONAL) {
+    if (typeof row[k] === 'string' && (row[k] as string).trim() === '') row[k] = null;
+  }
+  // A camera entered by hand carries a department but no domain, and would
+  // otherwise land on the map as a municipal pin whatever its owner.
+  if (!row.domain && typeof row.department_id === 'string') {
+    row.domain = DOMAIN_BY_DEPARTMENT[row.department_id] ?? 'public';
+  }
+  return { ...row, geom: toGeom(lat ?? null, lng ?? null) };
 }
+
+/**
+ * Bumped on every registry write. Readers that cache the camera list compare
+ * against it, so a camera just onboarded appears at once rather than after the
+ * cache expires — before this, a new camera took up to a minute to reach the
+ * map, and a deleted one lingered for as long.
+ */
+export let registryVersion = 0;
 
 /**
  * Insert or update cameras.
@@ -165,6 +204,7 @@ export async function upsertCameras(rows: CameraInput[]): Promise<number> {
     if (error) throw new Error(error.message);
     written += count ?? slice.length;
   }
+  registryVersion++;
   return written;
 }
 
@@ -172,6 +212,7 @@ export async function deleteCamera(id: string): Promise<void> {
   if (!db) throw new Error('No database configured');
   const { error } = await db.from('cameras').delete().eq('id', id);
   if (error) throw new Error(error.message);
+  registryVersion++;
 }
 
 /**

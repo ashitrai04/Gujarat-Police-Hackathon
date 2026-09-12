@@ -69,21 +69,9 @@ export function DetectionCanvas({
 
         chip(g, `${t.cls} ${Math.round(t.score * 100)}%`, x1, y1, colour, '#04201C', small ? 9 : 10.5, cw, 'above');
 
-        if (t.plate && !t.plate.text) {
-          // A plate is there, but nothing is claimed about what it says. A
-          // distant one gets only a faint outline — labelling every far-off
-          // plate "too small" buried the picture at a busy junction. A near
-          // one, whose reads are still converging, says an answer is coming.
-          const p = t.plate;
-          g.lineWidth = 1;
-          g.strokeStyle = p.note === 'too small' ? 'rgba(231,236,243,0.35)' : 'rgba(231,236,243,0.75)';
-          g.setLineDash([3, 3]);
-          g.strokeRect(X(p.box[0]), Y(p.box[1]), X(p.box[2]) - X(p.box[0]), Y(p.box[3]) - Y(p.box[1]));
-          g.setLineDash([]);
-          if (p.note === 'reading') {
-            chip(g, 'reading plate…', x1, y2, 'rgba(6,11,20,0.85)', '#92A0B5', small ? 9 : 10, cw, 'below');
-          }
-        } else if (t.plate && t.plate.text) {
+        // Only what was actually read is drawn: a plate with no confirmed
+        // reading adds nothing an operator can use, so it is not marked.
+        if (t.plate && t.plate.text) {
           const p = t.plate;
           const px1 = X(p.box[0]), py1 = Y(p.box[1]), px2 = X(p.box[2]), py2 = Y(p.box[3]);
           const tone = hit ? WATCH : p.stable ? STABLE : SETTLING;

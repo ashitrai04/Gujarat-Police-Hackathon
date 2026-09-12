@@ -74,6 +74,7 @@ export function TracePanel() {
         </label>
         <div className="flex gap-1.5">
           <input
+            data-tour="trace-plate"
             value={plate}
             onChange={(e) => setPlate(e.target.value.toUpperCase())}
             onKeyDown={(e) => e.key === 'Enter' && run(plate)}
@@ -85,7 +86,7 @@ export function TracePanel() {
               color: 'var(--text)',
             }}
           />
-          <Button variant="primary" onClick={() => run(plate)} disabled={loading}>
+          <Button data-tour="trace-go" variant="primary" onClick={() => run(plate)} disabled={loading}>
             {loading ? <Spinner /> : <Search size={13} />}
           </Button>
         </div>

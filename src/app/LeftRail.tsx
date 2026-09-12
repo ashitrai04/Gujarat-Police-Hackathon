@@ -145,7 +145,7 @@ export function LeftRail() {
             <PanelLeftClose size={13} />
           </button>
         </div>
-        <div className="flex items-baseline gap-1.5">
+        <div data-tour="count" className="flex items-baseline gap-1.5">
           <span className="mono text-[22px] font-semibold leading-none" style={{ color: 'var(--signal)' }}>
             {visibleCount}
           </span>
@@ -286,6 +286,7 @@ export function LeftRail() {
         {GIS_META.map((g) => (
           <ToggleRow
             key={g.key}
+            tour={`gis-${g.key}`}
             on={s.gis.includes(g.key)}
             onClick={() => s.toggleGis(g.key)}
             colour={g.colour}
@@ -316,6 +317,7 @@ export function LeftRail() {
           return (
             <ToggleRow
               key={k}
+              tour={`poi-${k}`}
               on={s.pois.includes(k)}
               onClick={() => s.togglePoi(k)}
               colour={M.colour}

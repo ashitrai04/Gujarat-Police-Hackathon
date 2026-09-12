@@ -47,6 +47,45 @@ async function loadProfile(userId: string): Promise<Profile | null> {
   return (data as Profile) ?? null;
 }
 
+/*
+ * Signed in without a sign-in form, for people the console is shared with.
+ *
+ * The deployment can hold a shared account's credentials server-side
+ * (api/demo-session.js); a visitor with no session is signed into it
+ * automatically, so a link can be opened and used without registering and
+ * waiting for approval. The password never reaches the browser — only a
+ * session token that expires and is refreshed the normal way.
+ *
+ * Where the deployment has no such account configured, or during local
+ * development, the endpoint declines and the ordinary sign-in form stays.
+ * Someone who signs out on purpose stays signed out for the rest of the visit.
+ */
+const OPTED_OUT = 'sentinel-signed-out';
+let demoAttempt: Promise<void> | null = null;
+
+export function ensureDemoSession(): Promise<void> {
+  if (demoAttempt) return demoAttempt;
+  demoAttempt = (async () => {
+    if (!db) return;
+    const { data } = await db.auth.getSession();
+    if (data.session) return;
+    try {
+      if (sessionStorage.getItem(OPTED_OUT)) return;
+    } catch {
+      /* storage blocked: fall through and sign in */
+    }
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}api/demo-session`, { method: 'POST' });
+      if (!res.ok || !(res.headers.get('content-type') || '').includes('application/json')) return;
+      const { access_token, refresh_token } = await res.json();
+      if (access_token && refresh_token) await db.auth.setSession({ access_token, refresh_token });
+    } catch {
+      /* no demo account here — the sign-in form remains */
+    }
+  })();
+  return demoAttempt;
+}
+
 /**
  * Current session and profile, kept in step with Supabase's own auth events so
  * a sign-in in another tab is reflected here too.
@@ -69,10 +108,12 @@ export function useAuth(): AuthState {
       if (live) setState({ ready: true, session, profile });
     };
 
-    void db.auth.getSession().then(({ data }) => apply(data.session));
     const { data: sub } = db.auth.onAuthStateChange((_e, session) => {
       void apply(session);
     });
+    // A visitor with no session is signed into the shared account, if the
+    // deployment offers one; the auth event above then reports it.
+    void ensureDemoSession().then(() => db!.auth.getSession()).then(({ data }) => apply(data.session));
 
     return () => {
       live = false;
@@ -85,6 +126,7 @@ export function useAuth(): AuthState {
 
 export async function signIn(email: string, password: string): Promise<void> {
   if (!db) throw new Error('No database configured');
+  try { sessionStorage.removeItem(OPTED_OUT); } catch { /* ignore */ }
   const { error } = await db.auth.signInWithPassword({ email, password });
   if (error) throw new Error(error.message);
 }
@@ -100,6 +142,8 @@ export async function signUp(email: string, password: string, fullName: string):
 }
 
 export async function signOut(): Promise<void> {
+  // Deliberate: do not sign this visitor straight back into the shared account.
+  try { sessionStorage.setItem(OPTED_OUT, '1'); } catch { /* ignore */ }
   await db?.auth.signOut();
 }
 

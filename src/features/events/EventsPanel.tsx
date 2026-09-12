@@ -90,6 +90,7 @@ export function EventsPanel() {
         <SectionHeader>Search</SectionHeader>
         <div className="flex flex-col gap-2 px-3 pb-3">
           <input
+            data-tour="events-plate"
             value={plate}
             onChange={(e) => setPlate(e.target.value.toUpperCase())}
             placeholder="Plate (partial matches allowed)"
@@ -123,6 +124,7 @@ export function EventsPanel() {
             {RANGES.map((r) => (
               <button
                 key={r.label}
+                data-tour={`range-${r.hours}`}
                 onClick={() => setHours(r.hours)}
                 className="flex-1 rounded-[5px] py-[5px] text-[11px] transition-colors"
                 style={{

@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { loadEnv } from 'vite'
 
@@ -69,8 +69,35 @@ const session = await signIn().catch((err: Error) => {
   return ''
 })
 
+/**
+ * Serve api/demo-session.js during development with the very handler Vercel
+ * runs, so shared-account sign-in behaves the same locally as in production.
+ * It reads SENTINEL_DEMO_EMAIL / SENTINEL_DEMO_PASSWORD from the dev server's
+ * environment or a local .env file (never committed); without them it answers
+ * 501 and the normal sign-in form is used, exactly as a deployment would.
+ */
+function demoSession(): Plugin {
+  return {
+    name: 'sentinel-demo-session',
+    configureServer(server) {
+      const env = loadEnv('development', dirname, '')
+      for (const k of ['SENTINEL_DEMO_EMAIL', 'SENTINEL_DEMO_PASSWORD', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']) {
+        if (!process.env[k] && env[k]) process.env[k] = env[k]
+      }
+      server.middlewares.use('/api/demo-session', async (req, res) => {
+        const mod = await import(pathToFileURL(path.join(dirname, 'api/demo-session.js')).href)
+        const out: Response = await mod.default(new Request('http://localhost/api/demo-session', { method: req.method }))
+        res.statusCode = out.status
+        res.setHeader('content-type', out.headers.get('content-type') ?? 'application/json')
+        res.setHeader('cache-control', 'no-store')
+        res.end(await out.text())
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), demoSession()],
   resolve: {
     alias: { '@': path.resolve(dirname, './src') },
   },

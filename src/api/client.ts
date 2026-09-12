@@ -19,7 +19,7 @@ import type {
   Route,
   WatchlistItem,
 } from './types';
-import { listCameras } from './cameraStore';
+import { listCameras, registryVersion } from './cameraStore';
 import {
   ackAlert, addWatchlist, listAlerts, listDetections, listWatchlist,
   plateRoute, removeWatchlist, searchPlates, subscribeAlerts, toggleWatchlist,
@@ -34,15 +34,29 @@ import { DB_READY } from './db';
 export const ANPR_CONNECTED = DB_READY;
 export { subscribeAlerts };
 
-let cache: { at: number; cameras: Camera[] } | null = null;
+/**
+ * Refresh everything derived from the camera list. The map draws its pins
+ * from a separate query ('cameras.geojson', keyed on the filters) and nothing
+ * that wrote to the registry refreshed it, so a camera just onboarded showed up
+ * in every list but not on the map. One call now covers every camera query.
+ */
+export function refreshCameras(qc: { invalidateQueries: (f: { predicate: (q: { queryKey: readonly unknown[] }) => boolean }) => Promise<void> }) {
+  return qc.invalidateQueries({
+    predicate: (q) => typeof q.queryKey[0] === 'string' && (q.queryKey[0] as string).startsWith('cameras.'),
+  });
+}
+
+let cache: { at: number; version: number; cameras: Camera[] } | null = null;
 const TTL = 60_000;
 
 async function allCameras(): Promise<Camera[]> {
-  if (cache && Date.now() - cache.at < TTL) return cache.cameras;
+  // A registry write since the list was cached makes it stale regardless of age.
+  if (cache && cache.version === registryVersion && Date.now() - cache.at < TTL) return cache.cameras;
   // The registry is authoritative once a database is configured; the live
   // grid catalogue is the read-only fallback until then.
+  const version = registryVersion;
   const cameras = await listCameras();
-  cache = { at: Date.now(), cameras };
+  cache = { at: Date.now(), version, cameras };
   return cameras;
 }
 

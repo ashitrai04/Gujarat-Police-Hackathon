@@ -109,6 +109,7 @@ export function ToggleRow({
   label,
   count,
   icon,
+  tour,
 }: {
   on: boolean;
   onClick: () => void;
@@ -116,9 +117,12 @@ export function ToggleRow({
   label: string;
   count?: number;
   icon?: ReactNode;
+  /** Hook the guided walkthrough uses to point at this row. */
+  tour?: string;
 }) {
   return (
     <button
+      data-tour={tour}
       onClick={onClick}
       aria-pressed={on}
       className="group flex w-full items-center gap-2 rounded-[6px] px-2 py-[7px] text-left transition-colors duration-150 hover:bg-[var(--surface-2)]"
