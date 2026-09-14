@@ -100,7 +100,7 @@ def registry_cameras() -> list[dict]:
     print('[batch] registry empty or unset; using the grid catalogue')
     req = urllib.request.Request(
         'https://cctv.corp8.cloud/cameras.json',
-        headers={'User-Agent': 'sentinel-batch/1.0'})
+        headers={'User-Agent': UA})  # the grid now refuses non-browser clients
     import json
     with urllib.request.urlopen(req, timeout=45) as r:
         cams = json.loads(r.read())
@@ -174,7 +174,9 @@ def main() -> None:
     ap.add_argument('--tiled', action='store_true',
                     help='tile plate detection — wide cameras with small plates')
     ap.add_argument('--source', default='rtsp', choices=['rtsp', 'hls'])
-    ap.add_argument('--hls-host', default='https://cctv.corp8.cloud')
+    ap.add_argument('--hls-host', default='https://cctv.corp8.cloud',
+                    help='grid host, or the local web app proxy (e.g. '
+                         'http://localhost:5173/sentinel) to share its session')
     ap.add_argument('--loop', type=int, default=0,
                     help='seconds between passes; 0 runs once')
     args = ap.parse_args()
@@ -186,8 +188,15 @@ def main() -> None:
     if not cams:
         sys.exit('no matching cameras')
 
-    session = grid_session(args.hls_host)
-    print(f'{len(cams)} cameras · {args.seconds}s each · source={args.source}\n' + (' | grid session ' + ('acquired' if session else 'MISSING')))
+    # The grid permits one session per address. Run beside the web app on the
+    # same machine and the two evict each other on every sign-in: the worker's
+    # login 403s the app's live feeds, and the app's 403s the worker mid-clip.
+    # So when --hls-host is the web app's own proxy, the worker signs in to
+    # nothing; the proxy already holds the session and attaches it.
+    via_proxy = args.source == 'hls' and args.hls_host.startswith(('http://localhost', 'http://127.0.0.1'))
+    session = None if via_proxy else grid_session(args.hls_host)
+    state = ('shared with the web app via ' + args.hls_host) if via_proxy else ('acquired' if session else 'MISSING')
+    print(f'{len(cams)} cameras, {args.seconds}s each, source={args.source}\n | grid session {state}')
     while True:
         run_once(cams, args.seconds, args.tiled, args.source,
                  args.hls_host, session)

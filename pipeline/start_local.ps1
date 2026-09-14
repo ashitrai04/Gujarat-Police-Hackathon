@@ -88,6 +88,12 @@ if (-not $NoWorker) {
     Write-Host "  Ctrl+C stops it; the web app keeps running."
     Write-Host ""
 
+    # With the web app running here, the worker fetches through its proxy and
+    # shares its grid session: the grid allows one session per address, and two
+    # separate sign-ins from this machine evict each other.
+    $via = @()
+    if (-not $NoWeb -and $Source -eq "hls") { $via = @("--hls-host", "http://localhost:5173/sentinel") }
+
     & $python (Join-Path $PSScriptRoot "run_batch.py") `
-        --cameras $Cameras --seconds $Seconds --loop $LoopEvery --source $Source
+        --cameras $Cameras --seconds $Seconds --loop $LoopEvery --source $Source @via
 }
