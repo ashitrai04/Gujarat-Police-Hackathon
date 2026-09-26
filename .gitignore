@@ -44,3 +44,14 @@ gujarat_shp
 
 # Worker credentials — service-role key, never commit
 /pipeline/.env.worker
+
+# Prompt-search artefacts: a built index, its thumbnails, and downloaded
+# model weights. All reproducible from `python -m ask.index`, none of it
+# small enough or stable enough to belong in the repository.
+pipeline/ask/_index/
+pipeline/ask/_eval/
+pipeline/weights/
+pipeline/ask/weights/
+pipeline/*.pt
+pipeline/ask/*.pt
+__pycache__/

@@ -139,6 +139,11 @@ interface State {
   wallFullscreen: boolean;
   toggleWallFullscreen: () => void;
 
+  /* The corner assistant. Deliberately not a RightPanel variant: a question
+     is asked *while* working in a panel, so it must not evict one. */
+  askOpen: boolean;
+  setAskOpen: (v: boolean) => void;
+
   /* Right panel */
   panel: RightPanel;
   openPanel: (p: RightPanel) => void;
@@ -292,6 +297,9 @@ export const useStore = create<State>()(
   setDockH: (dockH) => set({ dockH: Math.max(150, Math.min(900, dockH)) }),
   wallFullscreen: false,
   toggleWallFullscreen: () => set((s) => ({ wallFullscreen: !s.wallFullscreen })),
+
+  askOpen: false,
+  setAskOpen: (askOpen) => set({ askOpen }),
 
   panel: { kind: 'none' },
   openPanel: (panel) => set({ panel }),

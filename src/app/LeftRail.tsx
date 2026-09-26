@@ -4,7 +4,7 @@ import {
   Activity, Crosshair, Flame, Map as MapIcon,
   PanelLeftClose, PanelLeftOpen, Radio, ListFilter,
   Route as RouteIcon, Search, Siren, Database as DatabaseIcon,
-  Video,
+  Sparkles, Video,
 } from 'lucide-react';
 import { api } from '@/api/client';
 import { ALL_CAM_TYPES, ALL_DOMAINS, useStore, type PoiLayer } from './store';
@@ -347,6 +347,7 @@ export function LeftRail() {
         <RailButton icon={RouteIcon} data-tour="trace" label="Trace a vehicle" onClick={() => s.openPanel({ kind: 'trace' })} />
         <RailButton icon={Siren} data-tour="watchlist" label="Watchlist" onClick={() => s.openPanel({ kind: 'watchlist' })} />
         <RailButton icon={Search} data-tour="events" label="Event search & report" onClick={() => s.openPanel({ kind: 'events' })} />
+        <RailButton icon={Sparkles} label="Ask the estate" onClick={() => s.setAskOpen(true)} />
         <RailButton icon={Radio} data-tour="health" label="Camera health" onClick={() => s.openPanel({ kind: 'health' })} />
         <RailButton icon={DatabaseIcon} data-tour="registry" label="Registry & onboarding" onClick={() => s.openPanel({ kind: 'registry' })} />
       </div>

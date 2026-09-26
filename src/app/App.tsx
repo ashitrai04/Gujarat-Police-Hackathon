@@ -12,6 +12,7 @@ import { VideoWall } from '@/features/videowall/VideoWall';
 import { CameraPicker } from '@/features/cameras/CameraPicker';
 import { PinMenu } from '@/features/cameras/PinMenu';
 import { SoloCamera } from '@/features/cameras/SoloCamera';
+import { AskDock } from '@/features/ask/AskDock';
 import { useStore } from './store';
 
 export function App() {
@@ -123,6 +124,12 @@ export function App() {
 
       <VideoWall />
       {!dockOpen && <DockHandle />}
+
+      {/* The assistant floats over the console. Its own boundary: a failure
+          in a question must not take the map down with it. */}
+      <Boundary name="Assistant" silent>
+        <AskDock />
+      </Boundary>
 
       {/* Above every panel and the dock: the tour highlights them in turn. */}
       <Boundary name="Walkthrough" silent>
