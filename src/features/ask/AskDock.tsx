@@ -173,8 +173,12 @@ export function AskDock() {
             </p>
             <p>
               Open the console on the machine running the service
-              (<code>http://localhost:5173</code>) and this box comes alive. To point a
-              deployment at one, set <code>VITE_ASK_API_URL</code> and rebuild.
+              (<code>http://localhost:5173</code>) and this box comes alive.
+            </p>
+            <p>
+              To point this page at a reachable one, add
+              <code>?ask=https://host</code> to the address. It is remembered, so it
+              survives a reload — <code>?ask=off</code> forgets it.
             </p>
           </div>
         )}

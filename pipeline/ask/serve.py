@@ -13,19 +13,29 @@ which an edge function has neither of, and this service holds them loaded
 between requests — a cold start that loads SigLIP takes 20 seconds, which is
 the difference between a usable search box and an unusable one.
 
-It is also the component that must never be exposed to the internet: it answers
-any question put to it, with no auth of its own. The web app reaches it over
-the LAN, or through the same pattern the rest of this project uses — the
-browser talks to its own origin and the origin talks to the worker.
+The safe shape is that it is never exposed: the browser reaches it over the
+LAN, or through the pattern the rest of this project uses, where the origin
+talks to the worker.
+
+When it IS exposed — a tunnel, so a hosted page can reach the machine holding
+the models — set ASK_TOKEN and every request must carry it. Be clear about
+what that buys: the page is a browser, so whatever it sends is visible to
+anyone using the page. The token stops drive-by scanners finding an open
+endpoint; it does not stop someone who has the link. That is the honest
+ceiling for a service a browser must call directly, and the reason the answer
+for a real deployment is a server-side proxy with a real session, not a
+shared string.
 """
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import mimetypes
 import os
 import re
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import search as search_mod
@@ -34,6 +44,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 _lock = threading.Lock()   # one GPU; serialise the model work
 _state: dict = {}
+
+# Optional shared secret. Unset (the default) keeps the service open, which is
+# correct on a laptop that nothing outside can route to.
+TOKEN = os.environ.get('ASK_TOKEN', '').strip()
+
+
+def authorised(handler: BaseHTTPRequestHandler) -> bool:
+    if not TOKEN:
+        return True
+    sent = (handler.headers.get('x-ask-token') or '').strip()
+    if not sent:
+        # Images are loaded by <img>, which cannot carry a header, so the
+        # thumbnail route accepts the token in the query string instead.
+        q = urllib.parse.urlparse(handler.path).query
+        sent = (urllib.parse.parse_qs(q).get('t') or [''])[0].strip()
+    return hmac.compare_digest(sent, TOKEN)
 
 
 def _json(handler: BaseHTTPRequestHandler, code: int, obj) -> None:
@@ -55,11 +81,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('access-control-allow-origin', '*')
-        self.send_header('access-control-allow-headers', 'content-type')
+        self.send_header('access-control-allow-headers', 'content-type, x-ask-token')
         self.send_header('access-control-allow-methods', 'POST, GET, OPTIONS')
+        self.send_header('access-control-max-age', '86400')
         self.end_headers()
 
     def do_GET(self):
+        if not authorised(self):
+            return _json(self, 401, {'error': 'x-ask-token required'})
         if self.path.startswith('/health'):
             idx = _state.get('index')
             return _json(self, 200, {
@@ -69,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
                 'dim': idx.dim if idx else None,
                 'parser_up': __import__('ask.parse', fromlist=['x']).ollama_up(),
             })
-        m = re.match(r'^/thumb/([A-Za-z0-9_.\-]+)$', self.path)
+        m = re.match(r'^/thumb/([A-Za-z0-9_.\-]+)(?:\?.*)?$', self.path)
         if m:
             # Name-only match, no path separators: a thumbnail route that
             # accepts a path is a directory traversal waiting to happen.
@@ -88,6 +117,8 @@ class Handler(BaseHTTPRequestHandler):
         return _json(self, 404, {'error': 'not found'})
 
     def do_POST(self):
+        if not authorised(self):
+            return _json(self, 401, {'error': 'x-ask-token required'})
         if not self.path.startswith('/ask'):
             return _json(self, 404, {'error': 'not found'})
         try:
@@ -131,6 +162,7 @@ def main() -> None:
     embed.load()
 
     print(f'index   {len(_state["index"])} frames, dim {_state["index"].dim}')
+    print(f'auth    {"ASK_TOKEN set" if TOKEN else "OPEN - do not expose this port"}')
     print(f'serving http://{args.host}:{args.port}   POST /ask')
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 
