@@ -165,10 +165,18 @@ export function AskDock() {
 
       <div className="ask-stream" ref={scroller}>
         {!ASK_CONNECTED && (
-          <p className="ask-empty">
-            Prompt search is not configured. Set <code>VITE_ASK_API_URL</code> to the
-            search service and reload.
-          </p>
+          <div className="ask-offline">
+            <p>
+              <b>The search service is not reachable from here.</b> It holds several
+              gigabytes of models and needs a GPU, so it runs beside the inference
+              worker rather than on the web tier — a deployment cannot reach it.
+            </p>
+            <p>
+              Open the console on the machine running the service
+              (<code>http://localhost:5173</code>) and this box comes alive. To point a
+              deployment at one, set <code>VITE_ASK_API_URL</code> and rebuild.
+            </p>
+          </div>
         )}
 
         {ASK_CONNECTED && turns.length === 0 && (
@@ -208,13 +216,15 @@ export function AskDock() {
           name="ask"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="describe the incident…"
+          placeholder={ASK_CONNECTED ? 'describe the incident…' : 'search service not connected'}
           disabled={!ASK_CONNECTED}
+          title={ASK_CONNECTED ? undefined : 'Runs only where the search service is reachable'}
           className="ask-input"
         />
         <button
           type="button"
           className={`ask-verify${verify ? ' on' : ''}`}
+          disabled={!ASK_CONNECTED}
           onClick={() => setVerify((v) => !v)}
           title="Check each result with the vision model — slower, far fewer false hits"
           aria-pressed={verify}

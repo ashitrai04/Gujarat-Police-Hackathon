@@ -359,3 +359,37 @@
   .ask-fab, .ask-fab-label, .ask-dock, .ask-fab-glow { transition: none; animation: none; }
   .ask-fab-glow { opacity: .3; }
 }
+
+/* ── Offline ─────────────────────────────────────────────── */
+/* A control that cannot work must look like it, and say why where it is —
+   an explanation three inches above a box that silently ignores typing
+   reads as a bug rather than a configuration. */
+.ask-offline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--alert);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.ask-offline p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-dim); }
+.ask-offline b { color: var(--text); font-weight: 600; }
+.ask-offline code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--signal);
+  background: var(--signal-dim);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.ask-input:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+.ask-input:disabled::placeholder { font-style: italic; }
+.ask-verify:disabled { opacity: .35; cursor: not-allowed; }
+.ask-verify:disabled:hover { border-color: var(--line); color: var(--text-dim); }
