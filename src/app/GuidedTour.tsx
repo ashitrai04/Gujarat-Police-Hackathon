@@ -197,6 +197,7 @@ function restoreView(qc: QueryClient) {
   now.setFocusCamera(null);
   now.closePanel();
   now.setDockOpen(false);
+  now.setAskOpen(false);
 }
 
 /** One step per reference layer: click its row, fly to where it is densest. */
@@ -228,6 +229,7 @@ const STEPS: Step[] = [
     run: (c) => {
       c.set.closePanel();
       c.set.setDockOpen(false);
+      c.set.setAskOpen(false);
       c.set.setTrace(null);
       clearLayers(c.set);
       c.set.setTourView({ ...GUJARAT, intro: true });
@@ -468,6 +470,73 @@ const STEPS: Step[] = [
     hold: 5600,
     light: ['health', 'panel'],
     run: async (c) => { await c.click('health'); },
+  },
+
+  /* Ask the estate. Last of the tools, because it is the one that reaches
+     across all of them: it answers with frames from any camera, and hands the
+     result back to the map and the camera panel the earlier steps introduced. */
+  {
+    id: 'ask-open',
+    title: 'Tool 5, asking in plain language',
+    desc:
+      'Everything so far needed the operator to know which tool answers their '
+      + 'question. This one does not: describe the incident and the system decides '
+      + 'where to look. It runs on the machine in the room \u2014 the models are local, '
+      + 'and nothing about a question leaves it.',
+    hold: 5200,
+    early: true,
+    light: ['ask', 'ask-dock'],
+    run: async (c) => {
+      c.set.closePanel();
+      c.set.setDockOpen(false);
+      c.set.setFocusCamera(null);
+      await c.click('ask');
+    },
+  },
+  {
+    id: 'ask-run',
+    title: 'One box, four kinds of question',
+    desc:
+      'A sentence mixes constraints that want different machinery \u2014 a place is a '
+      + 'filter, a number is a detector, a described scene is an embedding. The prompt '
+      + 'is split first and each part sent where it can be answered, which is why the '
+      + 'line under the answer says what was searched and how many frames survived.',
+    hold: 7000,
+    early: true,
+    light: ['ask-dock'],
+    run: async (c) => {
+      await c.type('ask-prompt', 'a truck loaded with sacks');
+      await c.wait(400);
+      await c.click('ask-go');
+      // Parsing is a local language model and the first call after an idle
+      // spell reloads it, so this waits longer than the work usually takes.
+      await c.wait(9000);
+    },
+  },
+  {
+    id: 'ask-frame',
+    title: 'The frame, full size, and where it happened',
+    desc:
+      'A thumbnail is enough to rank a result and not enough to act on one. Opening it '
+      + 'shows the frame as it was stored and points the map at the camera that took it '
+      + '\u2014 what it shows and where it happened, from the same tap.',
+    hold: 6000,
+    early: true,
+    light: ['ask-hit', 'map'],
+    run: async (c) => {
+      const opened = await c.click('ask-hit');
+      if (!opened) {
+        c.say(
+          'The search service is not running, so there is no frame to open. '
+          + 'Start it with <b>.\\start.ps1</b> and this step shows the full frame.',
+        );
+        return;
+      }
+      await c.wait(2600);
+      // Leave the console as it was found: the next step is not about this.
+      const close = document.querySelector<HTMLElement>('.lb-x');
+      close?.click();
+    },
   },
 
   /* Onboarding: three routes in, the last one end to end and then undone. */

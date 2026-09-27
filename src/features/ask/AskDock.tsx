@@ -305,6 +305,7 @@ function Answer({ res }: { res: AskResponse }) {
             key={r.id}
             r={r}
             n={i + 1}
+            first={i === 0}
             onZoom={() => open(i)}
             onOpen={() => openPanel({ kind: 'camera', cameraId: r.camera_id })}
           />
@@ -325,14 +326,15 @@ function Answer({ res }: { res: AskResponse }) {
   );
 }
 
-function Hit({ r, n, onZoom, onOpen }: {
-  r: AskResult; n: number; onZoom: () => void; onOpen: () => void;
+function Hit({ r, n, first, onZoom, onOpen }: {
+  r: AskResult; n: number; first?: boolean; onZoom: () => void; onOpen: () => void;
 }) {
   const counts = Object.entries(r.counts);
   return (
     <figure className="ask-hit">
       <button
         className="ask-hit-img"
+        data-tour={first ? 'ask-hit' : undefined}
         onClick={onZoom}
         title="Open full size, and point the map at this camera"
       >
