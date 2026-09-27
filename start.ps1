@@ -139,9 +139,19 @@ if ($Tunnel -and -not $NoAsk) {
         Write-Host '  Tunnel already running' -ForegroundColor Green
     } elseif ($ngrok -and $domain) {
         Write-Host "Opening the tunnel at $domain ..." -ForegroundColor Cyan
-        Start-Process $ngrok -ArgumentList 'http', '8077', '--domain', $domain -WindowStyle Minimized
-        Start-Sleep -Seconds 3
-        Write-Host "  https://$domain  — the same address every time" -ForegroundColor Green
+        # The flag was renamed: --domain up to about 3.20, --url after it.
+        # Ask the binary rather than assume, so this keeps working across an
+        # ngrok update instead of failing with "unknown flag" on whichever
+        # one it is not.
+        $help = & $ngrok http --help 2>&1 | Out-String
+        $tunnelArgs = if ($help -match '--url ') {
+            @('http', '8077', '--url', "https://$domain")
+        } else {
+            @('http', '8077', '--domain', $domain)
+        }
+        Start-Process $ngrok -ArgumentList $tunnelArgs -WindowStyle Minimized
+        Start-Sleep -Seconds 4
+        Write-Host "  https://$domain  - the same address every time" -ForegroundColor Green
     } elseif ($ngrok) {
         Write-Host '  ngrok is installed but no NGROK_DOMAIN is set in .env.' -ForegroundColor Yellow
         Write-Host '  Reserve a free domain at dashboard.ngrok.com > Domains, then add' -ForegroundColor Yellow
