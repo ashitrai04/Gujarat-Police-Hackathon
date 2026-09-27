@@ -10,6 +10,9 @@ import type * as mapboxgl from 'mapbox-gl';
 import type { GeoJSONFeatureCollection, Route } from '@/api/types';
 
 import { DOMAIN_ICON, POI_ICON, POI_KIND_TO_LAYER } from './icons';
+import {
+  ensureVehicleLayer, LYR_VEHICLE, LYR_VEHICLE_HALO, pointAlong, setVehicle,
+} from './vehicle';
 
 export const SRC = {
   cameras: 'sentinel-cameras',
@@ -336,6 +339,8 @@ const STACK_TOP = [
   LYR.poiPoint, LYR.poiIcon,
   LYR.heat, LYR.clusters, LYR.clusterCount, LYR.pointRing, LYR.point,
   LYR.routeGlow, LYR.routeLine, LYR.routeStops, LYR.routeStopLabels,
+  // The vehicle is the thing being watched. Last, so nothing covers it.
+  LYR_VEHICLE_HALO, LYR_VEHICLE,
 ];
 
 export function restack(map: mapboxgl.Map) {
@@ -427,18 +432,33 @@ export function setRouteProgress(
   if (!route || route.stops.length < 1) {
     setData(map, SRC.route, EMPTY);
     setData(map, SRC.routeStops, EMPTY);
+    setVehicle(map, null);
     return;
   }
   const p = Math.min(1, Math.max(0, progress));
   const n = Math.max(1, Math.round(route.stops.length * p));
   const shown = route.stops.slice(0, n);
 
-  // The road-matched line has far more vertices than there are sightings, so
-  // it is sliced by the same fraction rather than by stop count. That keeps the
-  // drawn line and the highlighted stops advancing together.
-  const line = snapped?.length
-    ? snapped.slice(0, Math.max(2, Math.round(snapped.length * p)))
+  // Sliced by DISTANCE, not by vertex index.
+  //
+  // Map-matched geometry bunches vertices at junctions and spreads them along
+  // straights, so an index-based slice advanced the line in jerks — slow
+  // through every corner, then a jump down the open road. Interpolating along
+  // the length fixes the line and, because the same call returns the head of
+  // it, guarantees the vehicle marker sits exactly on its own trail instead of
+  // a few pixels past the end of it.
+  const full = (snapped?.length
+    ? snapped
+    : route.stops.map((s) => [s.lng, s.lat])) as [number, number][];
+  const head = pointAlong(full, p);
+  const line = head && head.travelled.length > 1
+    ? head.travelled
     : shown.map((s) => [s.lng, s.lat] as [number, number]);
+
+  ensureVehicleLayer(map);
+  // Only while there is a journey to follow: a single sighting is a place, not
+  // a route, and a chevron on it would imply a direction nothing measured.
+  setVehicle(map, route.stops.length > 1 && head ? head.at : null, head?.bearing ?? 0);
 
   setData(map, SRC.route, {
     type: 'FeatureCollection',

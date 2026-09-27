@@ -393,3 +393,18 @@
 .ask-input:disabled::placeholder { font-style: italic; }
 .ask-verify:disabled { opacity: .35; cursor: not-allowed; }
 .ask-verify:disabled:hover { border-color: var(--line); color: var(--text-dim); }
+
+/* A thumbnail that opens something has to look like it does. */
+.ask-hit-zoom {
+  position: absolute;
+  top: 4px; right: 4px;
+  display: grid; place-items: center;
+  width: 20px; height: 20px;
+  border-radius: 4px;
+  background: rgba(11, 18, 32, .82);
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity .15s, color .15s;
+}
+.ask-hit-img:hover .ask-hit-zoom,
+.ask-hit-img:focus-visible .ask-hit-zoom { opacity: 1; color: var(--signal); }

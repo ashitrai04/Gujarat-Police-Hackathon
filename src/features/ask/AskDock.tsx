@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Eye, Send, ShieldAlert, Sparkles, X,
+  Eye, Maximize2, Send, ShieldAlert, Sparkles, X,
 } from 'lucide-react';
 import {
   ask, askHealth, thumbUrl, ASK_CONNECTED,
@@ -8,6 +8,7 @@ import {
 } from '@/api/ask';
 import { Spinner } from '@/components/ui';
 import { useStore } from '@/app/store';
+import { Lightbox } from './Lightbox';
 import './AskDock.css';
 
 /**
@@ -254,6 +255,17 @@ export function AskDock() {
 function Answer({ res }: { res: AskResponse }) {
   const setFocusCamera = useStore((s) => s.setFocusCamera);
   const openPanel = useStore((s) => s.openPanel);
+  const [zoomed, setZoomed] = useState<number | null>(null);
+
+  /* Opening a frame also points the map at the camera that took it.
+     The two questions an operator has are "what does this actually show?" and
+     "where did it happen?", and answering only the first leaves them hunting
+     for the second behind a full-screen image. */
+  const open = (i: number) => {
+    setZoomed(i);
+    const hit = res.results[i];
+    if (hit) setFocusCamera(hit.camera_id);
+  };
 
   if (res.refused) {
     return (
@@ -293,24 +305,40 @@ function Answer({ res }: { res: AskResponse }) {
             key={r.id}
             r={r}
             n={i + 1}
-            onMap={() => setFocusCamera(r.camera_id)}
+            onZoom={() => open(i)}
             onOpen={() => openPanel({ kind: 'camera', cameraId: r.camera_id })}
           />
         ))}
       </div>
+
+      {zoomed !== null && (
+        <Lightbox
+          results={res.results}
+          index={zoomed}
+          onIndex={open}
+          onClose={() => setZoomed(null)}
+          onShowOnMap={(r) => setFocusCamera(r.camera_id)}
+          onOpenCamera={(r) => openPanel({ kind: 'camera', cameraId: r.camera_id })}
+        />
+      )}
     </div>
   );
 }
 
-function Hit({ r, n, onMap, onOpen }: {
-  r: AskResult; n: number; onMap: () => void; onOpen: () => void;
+function Hit({ r, n, onZoom, onOpen }: {
+  r: AskResult; n: number; onZoom: () => void; onOpen: () => void;
 }) {
   const counts = Object.entries(r.counts);
   return (
     <figure className="ask-hit">
-      <button className="ask-hit-img" onClick={onMap} title="Show this camera on the map">
+      <button
+        className="ask-hit-img"
+        onClick={onZoom}
+        title="Open full size, and point the map at this camera"
+      >
         <img src={thumbUrl(r.thumb_url)} alt="" loading="lazy" />
         <span className="ask-hit-rank">{n}</span>
+        <span className="ask-hit-zoom" aria-hidden><Maximize2 size={13} /></span>
         {r.verified === true && <span className="ask-hit-flag ok">confirmed</span>}
         {r.verified === false && <span className="ask-hit-flag no">rejected</span>}
       </button>

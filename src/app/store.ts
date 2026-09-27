@@ -388,3 +388,20 @@ export const useStore = create<State>()(
 if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).__SENTINEL_STORE__ = useStore;
 }
+
+/*
+ * Dev-only handle on the store.
+ *
+ * The route replay cannot be exercised against this estate's data: 50
+ * detections carry a plate, 40 plates are distinct, and not one of them was
+ * seen by two cameras — so `api.route()` always returns a single stop and the
+ * animation has nothing to animate. Rather than seed the database with a
+ * journey that never happened, the store is reachable in development so a
+ * route can be pushed in directly and the rendering checked.
+ *
+ * Same shape as the detector's `__liveParity` hook: a test seam, stripped from
+ * production builds.
+ */
+if (import.meta.env.DEV) {
+  (window as unknown as Record<string, unknown>).__sentinel = { store: useStore };
+}
