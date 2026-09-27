@@ -72,17 +72,54 @@ export function AskDock() {
   const [verify, setVerify] = useState(false);
   const [health, setHealth] = useState<Awaited<ReturnType<typeof askHealth>>>(null);
   const [probed, setProbed] = useState(false);
+  const [waiting, setWaiting] = useState(false);
   const busy = turns.some((t) => t.state === 'thinking');
 
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open && !probed) {
-      void askHealth().then((h) => { setHealth(h); setProbed(true); });
-    }
     if (open) setTimeout(() => box.current?.focus(), 80);
-  }, [open, probed]);
+  }, [open]);
+
+  /*
+   * Keep looking for the service while the panel is open and nothing is
+   * answering.
+   *
+   * The machine holding the models is a laptop: it gets closed, it sleeps, it
+   * is started after the page was. Requiring a reload to notice it came back
+   * makes a working system look broken, and the operator has no way to know
+   * that reloading is what would fix it. So the panel waits, and connects
+   * itself the moment the service answers.
+   *
+   * The interval backs off to 15s after the first minute — a page left open on
+   * a screen overnight should not poll a dead address twice a second until
+   * morning — and stops entirely while a question is in flight, so a probe
+   * cannot queue behind the answer it would report on.
+   */
+  useEffect(() => {
+    if (!open || !ASK_CONNECTED || health || busy) return;
+    let stop = false;
+    let tries = 0;
+
+    const look = async () => {
+      if (stop) return;
+      setWaiting(tries > 0);
+      const h = await askHealth();
+      if (stop) return;
+      setProbed(true);
+      if (h) {
+        setHealth(h);
+        setWaiting(false);
+        return;
+      }
+      tries += 1;
+      timer = setTimeout(look, tries < 12 ? 5000 : 15000);
+    };
+
+    let timer: ReturnType<typeof setTimeout> = setTimeout(look, 0);
+    return () => { stop = true; clearTimeout(timer); };
+  }, [open, health, busy]);
 
   // Keep the newest answer in view as it arrives.
   useLayoutEffect(() => {
@@ -108,6 +145,19 @@ export function AskDock() {
       const res = await ask(clean, { k: 8, verify });
       setTurns((t) => t.map((x) => (x.id === id ? { ...x, state: 'done', res } : x)));
     } catch (e) {
+      // A question asked the moment the service is coming up should not be
+      // lost to the one failure. Re-probe, and if it is there now, ask again.
+      const back = await askHealth();
+      if (back) {
+        setHealth(back);
+        try {
+          const res = await ask(clean, { k: 8, verify });
+          setTurns((t) => t.map((x) => (x.id === id ? { ...x, state: 'done', res } : x)));
+          return;
+        } catch { /* fall through to the error below */ }
+      } else {
+        setHealth(null);
+      }
       const error = e instanceof Error ? e.message : String(e);
       setTurns((t) => t.map((x) => (x.id === id ? { ...x, state: 'error', error } : x)));
     }
@@ -160,6 +210,7 @@ export function AskDock() {
             {health
               ? `${health.frames.toLocaleString()} frames · ${health.parser_up ? 'local model' : 'rules only'}`
               : !ASK_CONNECTED ? 'offline'
+              : waiting ? 'waiting for the service…'
               : probed ? 'not reachable'
               : 'connecting…'}
           </p>
@@ -192,20 +243,25 @@ export function AskDock() {
         {ASK_CONNECTED && probed && !health && (
           <div className="ask-offline">
             <p>
-              <b>Nothing answered at {askTarget().base || 'the configured address'}.</b>{' '}
-              {askTarget().remembered
-                ? 'That address was remembered from an earlier link. A tunnel gets a '
-                  + 'new hostname every time it restarts, so a saved one stops working.'
-                : 'The search service may not be running on this machine.'}
+              <b>Waiting for the search service.</b> Nothing is answering at{' '}
+              <code>{askTarget().base || 'the configured address'}</code> yet.
             </p>
             <p>
-              Start it with <code>.\start.ps1</code>
-              {askTarget().remembered ? ', or forget the saved address:' : '.'}
+              Start it with <code>.\start.ps1</code> on the machine that holds the
+              models. This panel is checking every few seconds and will connect on
+              its own — no reload.
             </p>
             {askTarget().remembered && (
-              <button className="ask-forget" onClick={forgetRemembered}>
-                Forget it and use this build's address
-              </button>
+              <>
+                <p>
+                  That address was saved from an earlier link. If it was a quick
+                  tunnel, the hostname changes on every restart and the saved one
+                  is already dead.
+                </p>
+                <button className="ask-forget" onClick={forgetRemembered}>
+                  Forget it and use this build's address
+                </button>
+              </>
             )}
           </div>
         )}

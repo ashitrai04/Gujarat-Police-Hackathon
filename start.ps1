@@ -23,6 +23,7 @@ $root = $PSScriptRoot
 $python = Join-Path (Split-Path -Parent $root) '.venv\Scripts\python.exe'
 $ollamaExe = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"
 $cloudflared = "${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe"
+$ngrok = (Get-Command ngrok -ErrorAction SilentlyContinue).Source
 
 function Test-Port([int] $Port) {
     [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
@@ -33,7 +34,7 @@ function Show-Status {
         @{ n = 'Ollama          :11434'; up = (Test-Port 11434) }
         @{ n = 'Search service  :8077 '; up = (Test-Port 8077) }
         @{ n = 'Web app         :5173 '; up = (Test-Port 5173) }
-        @{ n = 'Tunnel                '; up = [bool](Get-Process cloudflared -ErrorAction SilentlyContinue) }
+        @{ n = 'Tunnel                '; up = [bool](Get-Process cloudflared, ngrok -ErrorAction SilentlyContinue) }
     )
     Write-Host ''
     foreach ($r in $rows) {
@@ -57,7 +58,7 @@ if ($Stop) {
     Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
         Where-Object { $_.CommandLine -like '*vite*' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process cloudflared, ngrok -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     Show-Status
     return
@@ -121,17 +122,37 @@ if (Test-Port 5173) {
 }
 
 # ── Optional tunnel ────────────────────────────────────────────────────
+#
+# ngrok with a reserved domain when one is configured, because the address has
+# to survive a restart. A Cloudflare quick tunnel invents a new hostname every
+# time it starts, so anything pointed at yesterday's is already broken — which
+# is fine for one demo and useless as a permanent arrangement.
 if ($Tunnel -and -not $NoAsk) {
-    if (-not (Test-Path $cloudflared)) {
-        Write-Host '  cloudflared not installed:  winget install Cloudflare.cloudflared' -ForegroundColor Yellow
-    } elseif (Get-Process cloudflared -ErrorAction SilentlyContinue) {
-        Write-Host '  Tunnel already running — read its window for the URL' -ForegroundColor Green
-    } else {
-        Write-Host 'Opening a tunnel to the search service...' -ForegroundColor Cyan
+    $domain = ''
+    $envFile = Join-Path $root '.env'
+    if (Test-Path $envFile) {
+        $m = Select-String -Path $envFile -Pattern '^NGROK_DOMAIN=(.+)$' | Select-Object -First 1
+        if ($m) { $domain = $m.Matches[0].Groups[1].Value.Trim() }
+    }
+
+    if (Get-Process ngrok, cloudflared -ErrorAction SilentlyContinue) {
+        Write-Host '  Tunnel already running' -ForegroundColor Green
+    } elseif ($ngrok -and $domain) {
+        Write-Host "Opening the tunnel at $domain ..." -ForegroundColor Cyan
+        Start-Process $ngrok -ArgumentList 'http', '8077', '--domain', $domain -WindowStyle Minimized
+        Start-Sleep -Seconds 3
+        Write-Host "  https://$domain  — the same address every time" -ForegroundColor Green
+    } elseif ($ngrok) {
+        Write-Host '  ngrok is installed but no NGROK_DOMAIN is set in .env.' -ForegroundColor Yellow
+        Write-Host '  Reserve a free domain at dashboard.ngrok.com > Domains, then add' -ForegroundColor Yellow
+        Write-Host '    NGROK_DOMAIN=<your-name>.ngrok-free.app' -ForegroundColor Yellow
+        Write-Host '  A random address is no use: it would have to be re-pasted each time.' -ForegroundColor Yellow
+    } elseif (Test-Path $cloudflared) {
+        Write-Host 'No ngrok domain configured; opening a throwaway tunnel.' -ForegroundColor Yellow
         Start-Process $cloudflared -ArgumentList 'tunnel', '--url', 'http://127.0.0.1:8077', '--no-autoupdate'
-        Write-Host '  The https://<name>.trycloudflare.com URL appears in that window.' -ForegroundColor Yellow
-        Write-Host '  Point a hosted page at it with:' -ForegroundColor Yellow
-        Write-Host '    <site>/?ask=<that-url>&askToken=<VITE_ASK_TOKEN from .env>' -ForegroundColor Yellow
+        Write-Host '  Its URL changes on every restart — read it from that window.' -ForegroundColor Yellow
+    } else {
+        Write-Host '  No tunnel tool:  winget install ngrok.ngrok' -ForegroundColor Yellow
     }
 }
 
