@@ -27,7 +27,9 @@ const STORE_KEY = 'sentinel-ask-url';
 const TOKEN_KEY = 'sentinel-ask-token';
 
 /** Read `?ask=` / `?askToken=`, remember them, and return what is stored. */
-function resolved(): { base: string; token: string } {
+function resolved(): {
+  base: string; token: string; stored: string; envBase: string; envToken: string;
+} {
   const envBase = (import.meta.env.VITE_ASK_API_URL ?? '').trim();
   const envToken = (import.meta.env.VITE_ASK_TOKEN ?? '').trim();
   let base = '';
@@ -62,10 +64,44 @@ function resolved(): { base: string; token: string } {
     // A stored base with no stored token must not silently borrow the build's
     // token: they belong to different services.
     token: base ? token : (token || envToken),
+    stored: base.replace(/\/+$/, ''),
+    envBase: envBase.replace(/\/+$/, ''),
+    envToken,
   };
 }
 
-const { base: BASE, token: TOKEN } = resolved();
+const initial = resolved();
+
+/*
+ * The address in use, which can change after a health check.
+ *
+ * A remembered address is a convenience until it stops answering, and then it
+ * is a trap: a tunnel hostname saved once keeps overriding a perfectly good
+ * local service, and the panel reports "Failed to fetch" forever with no hint
+ * that it is calling somewhere that no longer exists. So the stored address is
+ * a preference, not a commitment — if it fails its health check and a
+ * build-time address exists, the client falls back to that and says it did.
+ */
+let BASE = initial.base;
+let TOKEN = initial.token;
+
+/** Where the client ended up pointing, and whether that was the remembered one. */
+export function askTarget(): { base: string; remembered: boolean; fellBack: boolean } {
+  return {
+    base: BASE,
+    remembered: !!initial.stored && BASE === initial.stored,
+    fellBack: !!initial.stored && BASE !== initial.stored,
+  };
+}
+
+/** Forget a remembered address and reload onto the built-in one. */
+export function forgetRemembered(): void {
+  try {
+    localStorage.removeItem(STORE_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+  } catch { /* nothing to forget */ }
+  location.reload();
+}
 
 /*
  * The shared token travels in the page, so it is not a secret from anyone
@@ -76,10 +112,7 @@ function authHeaders(): Record<string, string> {
   return TOKEN ? { 'x-ask-token': TOKEN } : {};
 }
 
-export const ASK_CONNECTED = BASE.length > 0;
-
-/** Where the client is pointed, for the panel to show. */
-export const ASK_BASE = BASE;
+export const ASK_CONNECTED = initial.base.length > 0 || initial.envBase.length > 0;
 
 export interface AskResult {
   id: number;
@@ -145,17 +178,37 @@ export function thumbUrl(path: string): string {
   return `${BASE}${path}${TOKEN ? `?t=${encodeURIComponent(TOKEN)}` : ''}`;
 }
 
-export async function askHealth(): Promise<AskHealth | null> {
-  if (!ASK_CONNECTED) return null;
+async function probe(base: string, token: string): Promise<AskHealth | null> {
+  if (!base) return null;
   try {
-    const r = await fetch(`${BASE}/health`, {
-      headers: authHeaders(),
-      signal: AbortSignal.timeout(6000),
+    const r = await fetch(`${base}/health`, {
+      headers: token ? { 'x-ask-token': token } : {},
+      // The service may be loading a gigabyte of models on a cold start.
+      signal: AbortSignal.timeout(8000),
     });
     return r.ok ? ((await r.json()) as AskHealth) : null;
   } catch {
     return null;
   }
+}
+
+export async function askHealth(): Promise<AskHealth | null> {
+  if (!ASK_CONNECTED) return null;
+  const first = await probe(BASE, TOKEN);
+  if (first) return first;
+
+  // The remembered address is not answering. If the build carries one, try it
+  // before giving up — a dead tunnel should not disable a working local
+  // service just because someone once pasted a link.
+  if (initial.stored && initial.envBase && initial.envBase !== BASE) {
+    const second = await probe(initial.envBase, initial.envToken);
+    if (second) {
+      BASE = initial.envBase;
+      TOKEN = initial.envToken;
+      return second;
+    }
+  }
+  return null;
 }
 
 export async function ask(

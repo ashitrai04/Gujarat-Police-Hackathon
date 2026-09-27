@@ -408,3 +408,15 @@
 }
 .ask-hit-img:hover .ask-hit-zoom,
 .ask-hit-img:focus-visible .ask-hit-zoom { opacity: 1; color: var(--signal); }
+
+.ask-forget {
+  align-self: flex-start;
+  border: 1px solid var(--signal);
+  background: var(--signal-dim);
+  color: var(--signal);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.ask-forget:hover { background: var(--surface-3); }

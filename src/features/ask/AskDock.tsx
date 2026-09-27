@@ -3,7 +3,7 @@ import {
   Eye, Maximize2, Send, ShieldAlert, Sparkles, X,
 } from 'lucide-react';
 import {
-  ask, askHealth, thumbUrl, ASK_CONNECTED,
+  ask, askHealth, askTarget, forgetRemembered, thumbUrl, ASK_CONNECTED,
   type AskResponse, type AskResult,
 } from '@/api/ask';
 import { Spinner } from '@/components/ui';
@@ -71,15 +71,18 @@ export function AskDock() {
   const [prompt, setPrompt] = useState('');
   const [verify, setVerify] = useState(false);
   const [health, setHealth] = useState<Awaited<ReturnType<typeof askHealth>>>(null);
+  const [probed, setProbed] = useState(false);
   const busy = turns.some((t) => t.state === 'thinking');
 
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open && health === null) void askHealth().then(setHealth);
+    if (open && !probed) {
+      void askHealth().then((h) => { setHealth(h); setProbed(true); });
+    }
     if (open) setTimeout(() => box.current?.focus(), 80);
-  }, [open, health]);
+  }, [open, probed]);
 
   // Keep the newest answer in view as it arrives.
   useLayoutEffect(() => {
@@ -156,7 +159,9 @@ export function AskDock() {
           <p className="ask-sub">
             {health
               ? `${health.frames.toLocaleString()} frames · ${health.parser_up ? 'local model' : 'rules only'}`
-              : ASK_CONNECTED ? 'connecting…' : 'offline'}
+              : !ASK_CONNECTED ? 'offline'
+              : probed ? 'not reachable'
+              : 'connecting…'}
           </p>
         </div>
         <button className="ask-icon-btn" onClick={() => setOpen(false)} aria-label="Close">
@@ -181,6 +186,27 @@ export function AskDock() {
               <code>?ask=https://host</code> to the address. It is remembered, so it
               survives a reload — <code>?ask=off</code> forgets it.
             </p>
+          </div>
+        )}
+
+        {ASK_CONNECTED && probed && !health && (
+          <div className="ask-offline">
+            <p>
+              <b>Nothing answered at {askTarget().base || 'the configured address'}.</b>{' '}
+              {askTarget().remembered
+                ? 'That address was remembered from an earlier link. A tunnel gets a '
+                  + 'new hostname every time it restarts, so a saved one stops working.'
+                : 'The search service may not be running on this machine.'}
+            </p>
+            <p>
+              Start it with <code>.\start.ps1</code>
+              {askTarget().remembered ? ', or forget the saved address:' : '.'}
+            </p>
+            {askTarget().remembered && (
+              <button className="ask-forget" onClick={forgetRemembered}>
+                Forget it and use this build's address
+              </button>
+            )}
           </div>
         )}
 
