@@ -24,7 +24,10 @@ import os
 
 import numpy as np
 
-MODEL_ID = 'google/siglip2-base-patch16-384'
+# Overridable so a bigger card can carry a better retrieval model. Changing it
+# means rebuilding the index: embeddings from two towers are not comparable,
+# and a mixed index returns nonsense rather than an error.
+MODEL_ID = os.environ.get('ASK_EMBED_MODEL', 'google/siglip2-base-patch16-384')
 # Written by `python -m ask.fp16`; used automatically when present.
 LOCAL_FP16 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           'weights', 'siglip2-base-384-fp16')

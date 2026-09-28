@@ -23,12 +23,18 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import urllib.error
 import urllib.request
 
-OLLAMA = 'http://127.0.0.1:11434'
-MODEL = 'qwen2.5vl:3b'
+# Both are overridable, because the same code runs on very different
+# hardware. A 6 GB laptop card takes the 3B model; a 40 GB A100 takes a far
+# better one, and the only thing that should have to change between them is an
+# environment variable. OLLAMA_HOST likewise, so the language model can live on
+# another machine entirely.
+OLLAMA = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434').rstrip('/')
+MODEL = os.environ.get('ASK_VLM_MODEL', 'qwen2.5vl:3b')
 # Temperature 0 is not enough on its own: Ollama seeds each request randomly,
 # and a 3B model at temperature 0 still picks different tokens where two are
 # near-tied. The same prompt was producing different query plans between runs

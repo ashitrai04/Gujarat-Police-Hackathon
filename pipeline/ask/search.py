@@ -51,6 +51,14 @@ class Index:
         self.V = V
         with open(os.path.join(path, 'meta.json')) as f:
             self.meta = json.load(f)
+        # An index built by one tower and queried by another returns confident
+        # nonsense rather than an error, so the mismatch is named here.
+        from . import embed
+        built = self.meta.get('model')
+        if built and built != embed.MODEL_ID:
+            raise RuntimeError(
+                f'index was built with {built} but ASK_EMBED_MODEL is '
+                f'{embed.MODEL_ID}; rebuild the index or set them to match')
         self.thumbs = os.path.join(path, 'thumbs')
 
     def __len__(self) -> int:
