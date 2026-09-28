@@ -176,14 +176,12 @@ def setup():
        f'{{torch.cuda.is_available()}} devices={{torch.cuda.device_count()}}\')"')
 
     # -- ollama, in user space: no root, nothing outside $HOME --
-    if not os.path.isfile(OLLAMA):
-        print('==> fetching Ollama')
-        os.makedirs(OLLAMA_DIR, exist_ok=True)
-        sh(f'curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz '
-           f'-o {OLLAMA_DIR}/o.tgz && tar -xzf {OLLAMA_DIR}/o.tgz -C {OLLAMA_DIR} '
-           f'&& rm -f {OLLAMA_DIR}/o.tgz', check=True)
+    _install_ollama()
 
     _write_env()
+    if not os.path.isfile(OLLAMA):
+        print('!! no Ollama binary; stopping before the model pull')
+        return
     _start_ollama()
 
     print(f'==> pulling {VLM}  (a few GB)')
@@ -292,6 +290,101 @@ def _ensure_python():
     # each call having to remember the flag.
     os.environ['PIP_USER'] = '1'
     return PY
+
+
+def _ollama_asset():
+    """URL of the current linux-amd64 Ollama build, asked rather than assumed.
+
+    The download address has moved and the archive format with it:
+    ollama.com/download/ollama-linux-amd64.tgz is a 404, and the release asset
+    is now a .tar.zst. Hard-coding either the host or the extension is how this
+    breaks again in six months, so the release API is asked what exists and the
+    extraction follows from the name that comes back.
+    """
+    api = 'https://api.github.com/repos/ollama/ollama/releases/latest'
+    try:
+        with urllib.request.urlopen(api, timeout=30) as r:
+            rel = json.loads(r.read())
+    except Exception as e:                                   # noqa: BLE001
+        print(f'    could not reach the release API ({e})')
+        return None, None
+
+    # Plain amd64: not the ROCm build (AMD cards) and not the mlx one (Apple).
+    best = None
+    for a in rel.get('assets', []):
+        n = a['name']
+        if 'linux' in n and 'amd64' in n and 'rocm' not in n and 'mlx' not in n:
+            if n.endswith(('.tgz', '.tar.gz', '.tar.zst')):
+                best = a
+                break
+    if not best:
+        return None, None
+    print(f"    {rel.get('tag_name')}  {best['name']}  "
+          f"{best['size'] / 1e6:.0f} MB")
+    return best['browser_download_url'], best['name']
+
+
+def _install_ollama():
+    if os.path.isfile(OLLAMA):
+        print('    Ollama already installed')
+        return True
+
+    print('==> fetching Ollama')
+    os.makedirs(OLLAMA_DIR, exist_ok=True)
+    url, name = _ollama_asset()
+    if not url:
+        print(textwrap.dedent("""
+            !! Could not resolve an Ollama download. Install it by hand:
+                 https://github.com/ollama/ollama/releases/latest
+               extract so that ~/sentinel/ollama/bin/ollama exists, then
+               re-run setup().
+        """))
+        return False
+
+    archive = f'{OLLAMA_DIR}/{name}'
+    rc, _ = sh(f'curl -fL --retry 3 -o {archive} "{url}"')
+    if rc != 0 or not os.path.isfile(archive):
+        print('!! download failed')
+        return False
+
+    print('    extracting')
+    if name.endswith('.tar.zst'):
+        # GNU tar 1.31+ can do this directly; older ones need unzstd piped in;
+        # if the host has neither, the zstandard wheel always works.
+        rc, _ = sh(f'tar --zstd -xf {archive} -C {OLLAMA_DIR}', quiet=True)
+        if rc != 0:
+            rc, _ = sh(f'unzstd -c {archive} | tar -xf - -C {OLLAMA_DIR}', quiet=True)
+        if rc != 0:
+            print('    no zstd in tar; decompressing with Python')
+            sh(f'{PY} -m pip install -q zstandard', quiet=True)
+            rc, _ = sh(
+                f'{PY} -c "'
+                f'import zstandard,tarfile,io;'
+                f'f=open(r\'{archive}\',\'rb\');'
+                f'r=zstandard.ZstdDecompressor().stream_reader(f);'
+                f'tarfile.open(fileobj=r,mode=\'r|\').extractall(r\'{OLLAMA_DIR}\')"')
+    else:
+        rc, _ = sh(f'tar -xzf {archive} -C {OLLAMA_DIR}', quiet=True)
+
+    os.remove(archive) if os.path.isfile(archive) else None
+
+    if os.path.isfile(OLLAMA):
+        sh(f'chmod +x {OLLAMA}', quiet=True)
+        print('    installed')
+        return True
+
+    # Some builds nest the binary a level deeper than bin/.
+    _, found = sh(f'find {OLLAMA_DIR} -maxdepth 4 -type f -name ollama | head -1',
+                  quiet=True)
+    found = found.strip()
+    if found:
+        os.makedirs(f'{OLLAMA_DIR}/bin', exist_ok=True)
+        sh(f'cp {found} {OLLAMA} && chmod +x {OLLAMA}', quiet=True)
+        print('    installed')
+        return True
+
+    print(f'!! extracted but no ollama binary under {OLLAMA_DIR}')
+    return False
 
 
 def _write_env():
