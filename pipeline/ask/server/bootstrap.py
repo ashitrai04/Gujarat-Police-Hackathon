@@ -49,6 +49,7 @@ GIT_URL = os.environ.get(
     'SENTINEL_GIT', 'https://github.com/ashitrai04/Gujarat-Police-Hackathon.git')
 
 VENV = f'{HOME}/venv'
+# Resolved by _ensure_python(); not every host can build a venv the usual way.
 PY = f'{VENV}/bin/python'
 OLLAMA_DIR = f'{HOME}/ollama'
 OLLAMA = f'{OLLAMA_DIR}/bin/ollama'
@@ -160,9 +161,7 @@ def setup():
         sh(f'cd {REPO} && git pull --ff-only')
 
     # -- python --
-    if not os.path.isdir(VENV):
-        print('==> creating the virtualenv')
-        sh(f'python3 -m venv {VENV}', check=True)
+    _ensure_python()
     sh(f'{PY} -m pip install -q --upgrade pip wheel', check=True)
 
     print('==> installing packages (several minutes the first time)')
@@ -198,6 +197,103 @@ def setup():
     print(f'\n==> ready. Put .mp4 recordings in {FOOTAGE}, then build_index()')
 
 
+def _works(py):
+    """A python we can actually pip-install with."""
+    if not py or not os.path.isfile(py):
+        return False
+    rc, _ = sh(f'{py} -m pip --version', quiet=True)
+    return rc == 0
+
+
+def _ensure_python():
+    """Find or build an environment we can install into, and set PY to it.
+
+    `python3 -m venv` is the obvious way and fails on a lot of shared Debian
+    hosts: the distro splits `ensurepip` into a python3-venv package that is
+    not installed, and installing it needs root that a research account does
+    not have. The error it prints tells you to run apt, which is not advice you
+    can take.
+
+    So this tries, in order of how self-contained the result is:
+
+      1. venv, the normal way
+      2. venv --without-pip, then bootstrap pip into it with get-pip.py —
+         --without-pip skips ensurepip entirely, which is the part that is
+         missing, and get-pip.py needs nothing but the interpreter
+      3. virtualenv, which vendors its own pip and never touches ensurepip
+      4. conda, if this is a conda host
+      5. no environment at all: install into the user site-packages of the
+         interpreter already running. Always available, and last because it
+         shares a dependency set with whatever else this account runs.
+    """
+    global PY
+
+    if _works(f'{VENV}/bin/python'):
+        PY = f'{VENV}/bin/python'
+        print(f'    using the existing env at {VENV}')
+        return PY
+
+    print('==> preparing a Python environment')
+
+    # 1. the normal way
+    rc, _ = sh(f'python3 -m venv {VENV}', quiet=True)
+    if rc == 0 and _works(f'{VENV}/bin/python'):
+        PY = f'{VENV}/bin/python'
+        print('    venv ok')
+        return PY
+
+    # 2. venv without ensurepip, then pip by hand
+    print('    ensurepip is unavailable on this host; building the env without it')
+    sh(f'rm -rf {VENV}', quiet=True)
+    rc, _ = sh(f'python3 -m venv --without-pip {VENV}', quiet=True)
+    if rc == 0 and os.path.isfile(f'{VENV}/bin/python'):
+        sh(f'curl -fsSL https://bootstrap.pypa.io/get-pip.py -o {HOME}/get-pip.py',
+           quiet=True)
+        sh(f'{VENV}/bin/python {HOME}/get-pip.py -q', quiet=True)
+        if _works(f'{VENV}/bin/python'):
+            PY = f'{VENV}/bin/python'
+            print('    venv + get-pip ok')
+            return PY
+
+    # 3. virtualenv, which carries its own pip
+    print('    trying virtualenv')
+    sh(f'rm -rf {VENV}', quiet=True)
+    sh(f'{sys.executable} -m pip install -q --user virtualenv', quiet=True)
+    rc, _ = sh(f'{sys.executable} -m virtualenv -q {VENV}', quiet=True)
+    if rc == 0 and _works(f'{VENV}/bin/python'):
+        PY = f'{VENV}/bin/python'
+        print('    virtualenv ok')
+        return PY
+
+    # 4. conda, if this is one of those hosts
+    if shutil.which('conda'):
+        print('    trying conda')
+        sh(f'rm -rf {VENV}', quiet=True)
+        rc, _ = sh(f'conda create -y -q -p {VENV} python=3.11 pip', quiet=True)
+        if rc == 0 and _works(f'{VENV}/bin/python'):
+            PY = f'{VENV}/bin/python'
+            print('    conda ok')
+            return PY
+
+    # 5. the interpreter we are already running, installing to ~/.local
+    print(textwrap.dedent("""
+        !! Could not build an isolated environment, so packages will go into
+           this account's user site-packages instead. That works, but it shares
+           a dependency set with everything else this user runs — if something
+           here upgrades a package another project pins, that project breaks.
+
+           The clean fix needs one command from whoever administers the host:
+               sudo apt install python3.12-venv
+           after which re-running setup() builds a proper isolated env.
+    """))
+    sh(f'rm -rf {VENV}', quiet=True)
+    PY = sys.executable
+    # Makes every later `pip install` in this process land in ~/.local without
+    # each call having to remember the flag.
+    os.environ['PIP_USER'] = '1'
+    return PY
+
+
 def _write_env():
     gpu = best_gpu()
     token = _token()
@@ -206,6 +302,7 @@ def _write_env():
             export SENTINEL_HOME="{HOME}"
             export PIPELINE_DIR="{PIPELINE}"
             export VENV="{VENV}"
+            export ASK_PYTHON="{PY}"
             export PATH="{OLLAMA_DIR}/bin:$PATH"
             export OLLAMA_MODELS="{HOME}/ollama-models"
             export CUDA_VISIBLE_DEVICES="{gpu}"
@@ -265,6 +362,7 @@ def build_index(footage=None, every=1.0):
     and a smaller `every` costs almost nothing because the decode happens
     either way.
     """
+    _ensure_python()
     src = footage or FOOTAGE
     vids = [f for f in os.listdir(src) if f.lower().endswith('.mp4')] \
         if os.path.isdir(src) else []
@@ -275,19 +373,22 @@ def build_index(footage=None, every=1.0):
               f'{os.environ.get("USER","user")}@{_hostname()}:{src}/')
         return
     print(f'==> {len(vids)} videos in {src}')
-    sh(f'source {HOME}/env.sh && source {VENV}/bin/activate && '
-       f'cd {PIPELINE} && python -m ask.index {src} --out {INDEX} --every {every}')
+    sh(f'source {HOME}/env.sh && cd {PIPELINE} && '
+       f'{PY} -m ask.index {src} --out {INDEX} --every {every}')
     # Arithmetic over boxes already stored — seconds, but it must run after
     # every rebuild or the "three on one motorcycle" filter matches nothing.
-    sh(f'source {HOME}/env.sh && source {VENV}/bin/activate && '
-       f'cd {PIPELINE} && python -m ask.riders --index {INDEX}')
+    sh(f'source {HOME}/env.sh && cd {PIPELINE} && '
+       f'{PY} -m ask.riders --index {INDEX}')
     sh(f'du -sh {INDEX}')
 
 
 # ── 4. Run ─────────────────────────────────────────────────────────────
 _GUARD = r'''#!/usr/bin/env bash
 source "$SENTINEL_HOME/env.sh"
-source "$VENV/bin/activate"
+# The env may be a venv, a conda prefix, or the host interpreter with packages
+# in ~/.local — activate only if there is something to activate.
+[ -f "$VENV/bin/activate" ] && source "$VENV/bin/activate"
+PY="${ASK_PYTHON:-python}"
 LOG="$SENTINEL_HOME/ask.log"
 backoff=5
 while true; do
@@ -298,7 +399,7 @@ while true; do
   fi
   echo "[guard $(date -Is)] starting the service" >> "$LOG"
   cd "$PIPELINE_DIR"
-  python -u -m ask.serve --index "$SENTINEL_HOME/index" \
+  "$PY" -u -m ask.serve --index "$SENTINEL_HOME/index" \
       --host 0.0.0.0 --port "$ASK_PORT" >> "$LOG" 2>&1 &
   child=$!
   echo "$child" > "$SENTINEL_HOME/ask.pid"
@@ -315,6 +416,7 @@ def start():
     if not os.path.isdir(INDEX):
         print('!! no index yet — run build_index()')
         return
+    _ensure_python()
     if _service_up():
         print('==> already running')
         return status()
