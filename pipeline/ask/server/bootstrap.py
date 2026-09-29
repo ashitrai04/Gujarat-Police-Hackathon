@@ -697,6 +697,104 @@ def collect_footage(move=True):
     return moved
 
 
+
+
+NGROK = f'{HOME}/ngrok/ngrok'
+
+
+def install_ngrok(authtoken=None):
+    """Fetch ngrok into this account and, if given, save the authtoken.
+
+    Needed when the host answers only on its own network. This box reaches the
+    internet outward — it pulled a gigabyte from GitHub — but nothing reaches
+    port 8077 inward, and asking an administrator to open a port is a slower
+    path than making the outward connection do the work.
+    """
+    if not os.path.isfile(NGROK):
+        print('==> fetching ngrok')
+        os.makedirs(f'{HOME}/ngrok', exist_ok=True)
+        rc, _ = sh(f'curl -fsSL '
+                   f'https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz '
+                   f'-o {HOME}/ngrok/n.tgz && tar -xzf {HOME}/ngrok/n.tgz '
+                   f'-C {HOME}/ngrok && rm -f {HOME}/ngrok/n.tgz')
+        if rc != 0 or not os.path.isfile(NGROK):
+            print('!! download failed; get it from https://ngrok.com/download')
+            return False
+        sh(f'chmod +x {NGROK}', quiet=True)
+    if authtoken:
+        sh(f'{NGROK} config add-authtoken {authtoken}', quiet=True)
+        print('    authtoken saved')
+    print(f'    {NGROK}')
+    return True
+
+
+def tunnel(domain=None, authtoken=None):
+    """Put the service on a public URL.
+
+    `domain` should be a reserved one — ngrok's free tier includes a single
+    static domain. Without it the hostname changes every restart, and anything
+    configured to point at yesterday's is already broken.
+    """
+    if not install_ngrok(authtoken):
+        return None
+    if not _service_up():
+        print('!! the service is not running — start() first')
+        return None
+
+    sh('pkill -f "ngrok http" 2>/dev/null; true', quiet=True)
+    time.sleep(1)
+
+    domain = domain or os.environ.get('NGROK_DOMAIN', '')
+    # The flag was renamed --domain -> --url around 3.20; ask rather than guess.
+    _, help_text = sh(f'{NGROK} http --help 2>&1', quiet=True)
+    if domain:
+        flag = f'--url https://{domain}' if '--url ' in help_text \
+            else f'--domain {domain}'
+    else:
+        flag = ''
+        print('    no reserved domain: this URL changes on every restart')
+
+    subprocess.Popen(
+        f'exec setsid {NGROK} http {PORT} {flag} --log stdout '
+        f'> {HOME}/ngrok.log 2>&1 < /dev/null &',
+        shell=True, executable='/bin/bash',
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+
+    print('==> opening the tunnel', end='', flush=True)
+    url = f'https://{domain}' if domain else ''
+    for _ in range(40):
+        time.sleep(1)
+        print('.', end='', flush=True)
+        if domain:
+            break
+        _, log = sh(f'grep -oE "https://[a-zA-Z0-9.-]+\\.ngrok[a-z.-]*\\.(app|io)" '
+                    f'{HOME}/ngrok.log 2>/dev/null | head -1', quiet=True)
+        if log.strip():
+            url = log.strip()
+            break
+    print()
+
+    if not url:
+        print(f'!! no URL yet — check {HOME}/ngrok.log')
+        sh(f'tail -n 20 {HOME}/ngrok.log')
+        return None
+
+    with open(f'{HOME}/tunnel.url', 'w') as f:
+        f.write(url)
+
+    # Confirm it reaches back, rather than reporting a URL nobody has tried.
+    time.sleep(2)
+    rc, out = sh(f'curl -s -o /dev/null -w "%{{http_code}}" -m 25 '
+                 f'-H "x-ask-token: {_token()}" "{url}/health"', quiet=True)
+    print(f'  {url}   (health: {out.strip() or "no answer"})')
+    print()
+    print('  Vercel > Settings > Environment Variables, then redeploy once:')
+    print(f'    VITE_ASK_API_URL={url}')
+    print(f'    VITE_ASK_TOKEN={_token()}')
+    return url
+
+
 def doctor():
     """Check the whole chain and say which link is broken.
 
@@ -821,5 +919,6 @@ def ask(prompt, k=5, verify=False):
 print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
+print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
 print('debug:  ollama_debug()  ollama_restart()')
