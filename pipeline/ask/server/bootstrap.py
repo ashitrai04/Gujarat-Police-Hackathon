@@ -629,6 +629,20 @@ def _service_up():
         return False
 
 
+
+
+def _is_private(ip):
+    """True for addresses only routable inside a local network."""
+    try:
+        import ipaddress
+        a = ipaddress.ip_address(ip)
+        return a.is_private or a.is_loopback or a.is_link_local
+    except ValueError:
+        # Not an address at all — a hostname, which may or may not resolve
+        # publicly. Treated as private so the advice errs towards a tunnel.
+        return True
+
+
 def status():
     up = _service_up()
     print(f'  service : {"up" if up else "down"}   (port {PORT})')
@@ -637,15 +651,43 @@ def status():
         req = urllib.request.Request(f'http://127.0.0.1:{PORT}/health',
                                      headers={'x-ask-token': _token()})
         print('  health  :', urllib.request.urlopen(req, timeout=8).read().decode())
-    _, ip = sh("hostname -I 2>/dev/null | awk '{print $1}'", quiet=True)
+    _, raw = sh("hostname -I 2>/dev/null | awk '{print $1}'", quiet=True)
+    ip = raw.strip()
     print()
-    print('  Point the web app at it (Vercel env vars, then redeploy once):')
-    print(f'    VITE_ASK_API_URL=http://{ip.strip() or _hostname()}:{PORT}')
-    print(f'    VITE_ASK_TOKEN={_token()}')
-    print()
-    print('  If the browser cannot reach that address, see the "Reaching it"')
-    print('  section of pipeline/ask/server/README.md — jupyter-server-proxy is')
-    print('  usually the answer, and its authentication is real.')
+    print(f'  token : {_token()}')
+
+    # A tunnel already open is the address that works; say that first.
+    public = None
+    if os.path.isfile(f'{HOME}/tunnel.url'):
+        cand = open(f'{HOME}/tunnel.url').read().strip()
+        if cand:
+            public = cand
+
+    if public:
+        print()
+        print('  Vercel > Settings > Environment Variables, then redeploy once:')
+        print(f'    VITE_ASK_API_URL={public}')
+        print(f'    VITE_ASK_TOKEN={_token()}')
+        return
+
+    # Otherwise be honest about what this address is worth. Printing a private
+    # IP under "point the web app at it" invites pasting an address that
+    # cannot be routed to from anywhere the web app runs, and the failure then
+    # looks like the service rather than the network.
+    if _is_private(ip):
+        print(f'  address : http://{ip}:{PORT}   <- PRIVATE, this host\'s network only')
+        print()
+        print('  A browser outside that network cannot reach it, so this is not')
+        print('  the value to put in Vercel. Open a public URL instead:')
+        print('      install_ngrok(authtoken="...")')
+        print('      tunnel(domain="your-reserved.ngrok-free.app")')
+        print()
+        print('  If your browser IS on this network, it works as it stands.')
+    else:
+        print()
+        print('  Vercel > Settings > Environment Variables, then redeploy once:')
+        print(f'    VITE_ASK_API_URL=http://{ip}:{PORT}')
+        print(f'    VITE_ASK_TOKEN={_token()}')
 
 
 def logs(n=60, follow=False):
