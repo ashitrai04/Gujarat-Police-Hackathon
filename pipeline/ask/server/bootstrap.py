@@ -648,8 +648,100 @@ def logs(n=60, follow=False):
 
 
 # ── 5. Try it ──────────────────────────────────────────────────────────
+
+
+def doctor():
+    """Check the whole chain and say which link is broken.
+
+    Written because every failure so far has presented as a symptom several
+    steps downstream of its cause — a refused connection on 8077 that is really
+    a missing index, or a model that never finished pulling.
+    """
+    ok = True
+
+    def line(label, good, detail=''):
+        print(f'  {"ok  " if good else "FAIL"}  {label:22s} {detail}')
+        return good
+
+    print('=== chain ===')
+    ok &= line('repo', os.path.isdir(f'{REPO}/.git'), REPO)
+    have_py = _works(f'{VENV}/bin/python') or _works(sys.executable)
+    ok &= line('python env', have_py, VENV)
+    ok &= line('ollama binary', os.path.isfile(OLLAMA), OLLAMA)
+    up = _ollama_up()
+    ok &= line('ollama running', up, 'port 11434')
+
+    models = ''
+    if up:
+        try:
+            with urllib.request.urlopen('http://127.0.0.1:11434/api/tags',
+                                        timeout=8) as r:
+                tags = [m['name'] for m in json.loads(r.read()).get('models', [])]
+            models = ', '.join(tags) or '(none pulled)'
+            ok &= line('vlm pulled', any(VLM.split(':')[0] in t for t in tags),
+                       models)
+        except Exception as e:                               # noqa: BLE001
+            ok &= line('vlm pulled', False, str(e)[:60])
+
+    n_footage = len([f for f in os.listdir(FOOTAGE)
+                     if f.lower().endswith('.mp4')]) if os.path.isdir(FOOTAGE) else 0
+    ok &= line('footage', n_footage > 0, f'{n_footage} mp4 in {FOOTAGE}')
+
+    has_index = os.path.isfile(f'{INDEX}/vectors.npy')
+    ok &= line('index', has_index, INDEX)
+    if has_index:
+        try:
+            meta = json.load(open(f'{INDEX}/meta.json'))
+            print(f'        {meta.get("frames")} frames, {meta.get("model")}')
+        except Exception:                                    # noqa: BLE001
+            pass
+
+    guard = os.path.isfile(f'{HOME}/guard.pid')
+    running = False
+    if guard:
+        try:
+            os.kill(int(open(f'{HOME}/guard.pid').read().strip()), 0)
+            running = True
+        except Exception:                                    # noqa: BLE001
+            running = False
+    line('watchdog', running, '' if running else 'not running')
+    svc = _service_up()
+    ok &= line('search service', svc, f'port {PORT}')
+
+    print('\n=== next ===')
+    if not os.path.isfile(OLLAMA):
+        print('  setup()            — Ollama is not installed')
+    elif not up:
+        print('  ollama_restart()   — the daemon is not running')
+    elif models and VLM.split(':')[0] not in models:
+        print(f'  setup()            — {VLM} has not been pulled')
+    elif n_footage == 0:
+        print(f'  upload .mp4 files into {FOOTAGE}, then build_index()')
+    elif not has_index:
+        print('  build_index()      — there is footage but no index')
+    elif not svc:
+        print('  start()            — everything is ready, the service is down')
+        if os.path.isfile(f'{HOME}/ask.log'):
+            print(f'\n--- last of {HOME}/ask.log ---')
+            sh(f'tail -n 20 {HOME}/ask.log')
+    else:
+        print('  nothing — the chain is complete. ask("a bus on the road")')
+    return ok
+
+
 def ask(prompt, k=5, verify=False):
-    """Query the service directly, before involving any browser."""
+    """Query the service directly, before involving any browser.
+
+    Checks the service is there first. A connection error out of urllib is
+    forty lines of traceback ending in "Connection refused", which says where
+    it failed and nothing about what to do; the answer is almost always
+    "start() was not run, or did not finish".
+    """
+    if not _service_up():
+        print(f'!! nothing is listening on port {PORT}.\n')
+        doctor()
+        return None
+
     body = json.dumps({'prompt': prompt, 'k': k, 'verify': verify}).encode()
     req = urllib.request.Request(
         f'http://127.0.0.1:{PORT}/ask', data=body,
@@ -676,4 +768,5 @@ def ask(prompt, k=5, verify=False):
 print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
+print('check:  doctor()   — what is broken and what to run next')
 print('debug:  ollama_debug()  ollama_restart()')
