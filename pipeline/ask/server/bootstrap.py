@@ -397,6 +397,10 @@ def _write_env():
             export VENV="{VENV}"
             export ASK_PYTHON="{PY}"
             export PATH="{OLLAMA_DIR}/bin:$PATH"
+            # The release tarball carries its own CUDA libraries. Without this
+            # the binary starts and then cannot find them, which it reports as
+            # a GPU failure rather than a missing path.
+            export LD_LIBRARY_PATH="{OLLAMA_DIR}/lib:{OLLAMA_DIR}/lib/ollama:${{LD_LIBRARY_PATH:-}}"
             export OLLAMA_MODELS="{HOME}/ollama-models"
             export CUDA_VISIBLE_DEVICES="{gpu}"
             export ASK_VLM_MODEL="{VLM}"
@@ -431,19 +435,76 @@ def _ollama_up():
         return False
 
 
-def _start_ollama():
+
+
+def ollama_debug():
+    """Everything needed to work out why the daemon will not come up."""
+    print('=== binary ===')
+    sh(f'ls -la {OLLAMA_DIR}/bin 2>/dev/null || echo "no bin/"')
+    sh(f'ls -d {OLLAMA_DIR}/lib* 2>/dev/null || echo "no lib/"')
+    print('\n=== does it run at all? ===')
+    sh(f'source {HOME}/env.sh && {OLLAMA} --version 2>&1 | head -5')
+    print('\n=== port 11434 ===')
+    sh('(ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null) | grep 11434 '
+       '|| echo "nothing listening"')
+    print('\n=== processes ===')
+    sh('pgrep -a ollama || echo "none"')
+    print('\n=== log ===')
+    sh(f'tail -n 40 {HOME}/ollama.log 2>/dev/null || echo "(no log)"')
+    print('\n=== env ===')
+    sh(f'cat {HOME}/env.sh 2>/dev/null || echo "(no env.sh)"')
+
+
+def ollama_restart():
+    """Kill whatever is there and start again."""
+    sh('pkill -f "ollama serve" 2>/dev/null; true', quiet=True)
+    time.sleep(2)
+    return _start_ollama()
+
+
+def _start_ollama(wait=90):
+    """Start the daemon and wait for it, visibly.
+
+    The launch is detached and its output goes to a file, so nothing appears in
+    the cell while it comes up. An earlier version simply slept for sixty
+    seconds, which is indistinguishable from a hang and was reported as one.
+    It prints a dot a second now, and on failure shows the log rather than
+    naming a path and leaving the reader to go and look.
+    """
     if _ollama_up():
         print('    Ollama already up')
-        return
-    print('==> starting Ollama')
-    sh(f'source {HOME}/env.sh && setsid nohup {OLLAMA} serve '
-       f'> {HOME}/ollama.log 2>&1 < /dev/null &', quiet=True)
-    for _ in range(60):
+        return True
+
+    print('==> starting Ollama', end='', flush=True)
+    # Not through sh(): that captures stdout, and a detached grandchild holding
+    # the pipe open would block the read forever. Nothing here writes to the
+    # pipe at all.
+    subprocess.Popen(
+        f'source {HOME}/env.sh && exec setsid {OLLAMA} serve '
+        f'>> {HOME}/ollama.log 2>&1 < /dev/null &',
+        shell=True, executable='/bin/bash',
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+
+    for _ in range(wait):
         if _ollama_up():
-            print('    Ollama up')
-            return
+            print(' up')
+            return True
+        print('.', end='', flush=True)
         time.sleep(1)
-    print(f'!! Ollama did not start — see {HOME}/ollama.log')
+
+    print(' failed\n')
+    print(f'--- last of {HOME}/ollama.log ---')
+    sh(f'tail -n 25 {HOME}/ollama.log 2>/dev/null || echo "(no log written)"')
+    print(textwrap.dedent(f"""
+        Things that cause this:
+          - another Ollama is already bound to 11434 (try: pkill ollama)
+          - the binary cannot find its libraries; check that both
+            {OLLAMA_DIR}/bin and {OLLAMA_DIR}/lib exist
+          - no write access to {HOME}/ollama-models
+        Run ollama_debug() for the details.
+    """))
+    return False
 
 
 # ── 3. Index ───────────────────────────────────────────────────────────
@@ -615,3 +676,4 @@ def ask(prompt, k=5, verify=False):
 print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
+print('debug:  ollama_debug()  ollama_restart()')
