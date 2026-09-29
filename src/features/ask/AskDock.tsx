@@ -3,9 +3,10 @@ import {
   Eye, Maximize2, Send, ShieldAlert, Sparkles, X,
 } from 'lucide-react';
 import {
-  ask, askHealth, askTarget, forgetRemembered, thumbUrl, ASK_CONNECTED,
+  ask, askHealth, askTarget, forgetRemembered, ASK_CONNECTED,
   type AskResponse, type AskResult,
 } from '@/api/ask';
+import { useThumb } from '@/api/thumbs';
 import { Spinner } from '@/components/ui';
 import { useStore } from '@/app/store';
 import { Lightbox } from './Lightbox';
@@ -412,6 +413,7 @@ function Hit({ r, n, first, onZoom, onOpen }: {
   r: AskResult; n: number; first?: boolean; onZoom: () => void; onOpen: () => void;
 }) {
   const counts = Object.entries(r.counts);
+  const src = useThumb(r.thumb_url);
   return (
     <figure className="ask-hit">
       <button
@@ -420,7 +422,9 @@ function Hit({ r, n, first, onZoom, onOpen }: {
         onClick={onZoom}
         title="Open full size, and point the map at this camera"
       >
-        <img src={thumbUrl(r.thumb_url)} alt="" loading="lazy" />
+        {src
+          ? <img src={src} alt="" />
+          : <span className="ask-hit-blank" aria-hidden />}
         <span className="ask-hit-rank">{n}</span>
         <span className="ask-hit-zoom" aria-hidden><Maximize2 size={13} /></span>
         {r.verified === true && <span className="ask-hit-flag ok">confirmed</span>}

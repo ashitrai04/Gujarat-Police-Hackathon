@@ -112,6 +112,19 @@ function authHeaders(): Record<string, string> {
   return TOKEN ? { 'x-ask-token': TOKEN } : {};
 }
 
+/**
+ * Headers every call to the service carries.
+ *
+ * `ngrok-skip-browser-warning` suppresses the interstitial that ngrok's free
+ * tier serves to anything that looks like a browser. Its value is irrelevant;
+ * its presence is the signal. Without it a request is answered with an HTML
+ * warning page and a 200, which is harmless for JSON — it fails to parse and
+ * is reported — and silently wrong for an image, which renders as nothing.
+ */
+export function askHeaders(): Record<string, string> {
+  return { ...authHeaders(), 'ngrok-skip-browser-warning': 'true' };
+}
+
 export const ASK_CONNECTED = initial.base.length > 0 || initial.envBase.length > 0;
 
 export interface AskResult {
@@ -172,17 +185,26 @@ export interface AskHealth {
   parser_up: boolean;
 }
 
+/**
+ * Absolute URL of a thumbnail on the service.
+ *
+ * Fetched through `useThumb`, not handed to an `<img src>`: the request needs
+ * headers, and an `<img>` cannot send any. The token is therefore no longer
+ * appended as a query parameter — it travels as a header like every other
+ * call, and stays out of anything that logs URLs.
+ */
 export function thumbUrl(path: string): string {
-  // An <img> cannot send a header, so the token rides in the query string for
-  // this one route.
-  return `${BASE}${path}${TOKEN ? `?t=${encodeURIComponent(TOKEN)}` : ''}`;
+  return `${BASE}${path}`;
 }
 
 async function probe(base: string, token: string): Promise<AskHealth | null> {
   if (!base) return null;
   try {
     const r = await fetch(`${base}/health`, {
-      headers: token ? { 'x-ask-token': token } : {},
+      headers: {
+        ...(token ? { 'x-ask-token': token } : {}),
+        'ngrok-skip-browser-warning': 'true',
+      },
       // The service may be loading a gigabyte of models on a cold start.
       signal: AbortSignal.timeout(8000),
     });
@@ -218,7 +240,7 @@ export async function ask(
   if (!ASK_CONNECTED) throw new Error('Prompt search is not configured');
   const r = await fetch(`${BASE}/ask`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
+    headers: { 'content-type': 'application/json', ...askHeaders() },
     body: JSON.stringify({ prompt, k: opts.k ?? 12, verify: opts.verify ?? false }),
     // Verification runs a model over every shortlisted frame, so this is slow
     // by design. A short timeout would abort exactly the queries that are

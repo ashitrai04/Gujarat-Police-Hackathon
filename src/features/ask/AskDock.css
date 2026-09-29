@@ -420,3 +420,22 @@
   cursor: pointer;
 }
 .ask-forget:hover { background: var(--surface-3); }
+
+/* Holds the tile's shape while the picture is fetched, so a result list does
+   not reflow as each one lands. */
+.ask-hit-blank {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: linear-gradient(100deg, var(--surface-2) 30%,
+              var(--surface-3) 50%, var(--surface-2) 70%);
+  background-size: 220% 100%;
+  animation: ask-shimmer 1.4s linear infinite;
+}
+@keyframes ask-shimmer {
+  from { background-position: 120% 0; }
+  to   { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ask-hit-blank { animation: none; }
+}

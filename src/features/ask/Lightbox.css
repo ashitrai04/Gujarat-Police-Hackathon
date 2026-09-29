@@ -146,3 +146,13 @@
   .lb-img { max-height: calc(100vh - 290px); }
 }
 @media (prefers-reduced-motion: reduce) { .lb { animation: none; } }
+
+.lb-loading {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  padding: 40px;
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}

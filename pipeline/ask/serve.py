@@ -81,7 +81,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('access-control-allow-origin', '*')
-        self.send_header('access-control-allow-headers', 'content-type, x-ask-token')
+        # Echo whatever the preflight asked for rather than keeping a list.
+        #
+        # A fixed list has to be edited every time the client adds a header,
+        # and the failure when it is not is opaque: the browser refuses the
+        # request before it is sent, so the service sees nothing and its log
+        # shows nothing. That is how `ngrok-skip-browser-warning` — needed to
+        # get past the free tier's interstitial — silently broke every call
+        # from a page while curl kept working.
+        asked = self.headers.get('access-control-request-headers')
+        self.send_header('access-control-allow-headers',
+                         asked or 'content-type, x-ask-token')
         self.send_header('access-control-allow-methods', 'POST, GET, OPTIONS')
         self.send_header('access-control-max-age', '86400')
         self.end_headers()

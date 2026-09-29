@@ -1,7 +1,8 @@
 import { useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, MapPin, MonitorPlay, X } from 'lucide-react';
-import { thumbUrl, type AskResult } from '@/api/ask';
+import { type AskResult } from '@/api/ask';
+import { useThumb } from '@/api/thumbs';
 import './Lightbox.css';
 
 /**
@@ -33,6 +34,7 @@ export function Lightbox({
   onOpenCamera: (r: AskResult) => void;
 }) {
   const r = results[index];
+  const src = useThumb(r?.thumb_url ?? '');
 
   const step = useCallback(
     (d: number) => {
@@ -82,7 +84,9 @@ export function Lightbox({
               <ChevronLeft size={22} />
             </button>
           )}
-          <img src={thumbUrl(r.thumb_url)} alt="" className="lb-img" />
+          {src
+            ? <img src={src} alt="" className="lb-img" />
+            : <div className="lb-loading">loading the frame…</div>}
           {results.length > 1 && (
             <button className="lb-nav right" onClick={() => step(1)} aria-label="Next">
               <ChevronRight size={22} />
