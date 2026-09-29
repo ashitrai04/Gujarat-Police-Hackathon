@@ -520,6 +520,11 @@ def build_index(footage=None, every=1.0):
     src = footage or FOOTAGE
     vids = [f for f in os.listdir(src) if f.lower().endswith('.mp4')] \
         if os.path.isdir(src) else []
+    if not vids and src == FOOTAGE and _stray_footage():
+        print('==> uploads landed outside the footage directory; collecting them')
+        collect_footage()
+        vids = [f for f in os.listdir(src) if f.lower().endswith('.mp4')]
+
     if not vids:
         print(f'!! no .mp4 files in {src}')
         print('   upload them with the Jupyter file browser, or from your machine:')
@@ -650,6 +655,48 @@ def logs(n=60, follow=False):
 # ── 5. Try it ──────────────────────────────────────────────────────────
 
 
+
+
+def _stray_footage():
+    """.mp4 files sitting where an upload would have put them by accident.
+
+    Jupyter's upload button writes to whatever directory the file browser is
+    showing, which is the home directory unless you navigated first. Reporting
+    "0 mp4 in ~/sentinel/footage" while three of them sit one level up is
+    technically true and useless.
+    """
+    import glob
+    home = os.path.expanduser('~')
+    seen = []
+    for d in (home, f'{home}/Downloads', os.getcwd()):
+        if not os.path.isdir(d) or os.path.abspath(d) == os.path.abspath(FOOTAGE):
+            continue
+        found = glob.glob(f'{d}/*.mp4')
+        if found:
+            seen.append((d, found))
+    return seen
+
+
+def collect_footage(move=True):
+    """Move stray .mp4 files into the footage directory."""
+    os.makedirs(FOOTAGE, exist_ok=True)
+    moved = 0
+    for d, files in _stray_footage():
+        for f in files:
+            dest = os.path.join(FOOTAGE, os.path.basename(f))
+            if os.path.exists(dest):
+                continue
+            if move:
+                shutil.move(f, dest)
+            else:
+                shutil.copy2(f, dest)
+            moved += 1
+        print(f'  {"moved" if move else "copied"} {len(files)} from {d}')
+    n = len([f for f in os.listdir(FOOTAGE) if f.lower().endswith('.mp4')])
+    print(f'  {n} mp4 now in {FOOTAGE}')
+    return moved
+
+
 def doctor():
     """Check the whole chain and say which link is broken.
 
@@ -686,6 +733,9 @@ def doctor():
     n_footage = len([f for f in os.listdir(FOOTAGE)
                      if f.lower().endswith('.mp4')]) if os.path.isdir(FOOTAGE) else 0
     ok &= line('footage', n_footage > 0, f'{n_footage} mp4 in {FOOTAGE}')
+    stray = _stray_footage() if n_footage == 0 else []
+    for d, files in stray:
+        print(f'        {len(files)} mp4 found in {d} instead')
 
     has_index = os.path.isfile(f'{INDEX}/vectors.npy')
     ok &= line('index', has_index, INDEX)
@@ -715,6 +765,9 @@ def doctor():
         print('  ollama_restart()   — the daemon is not running')
     elif models and VLM.split(':')[0] not in models:
         print(f'  setup()            — {VLM} has not been pulled')
+    elif n_footage == 0 and stray:
+        print('  collect_footage()  — the uploads went to the wrong directory;')
+        print('                       this moves them, then build_index()')
     elif n_footage == 0:
         print(f'  upload .mp4 files into {FOOTAGE}, then build_index()')
     elif not has_index:
