@@ -439,3 +439,12 @@
 @media (prefers-reduced-motion: reduce) {
   .ask-hit-blank { animation: none; }
 }
+
+/* The candidate list, shown only when none of them answered. */
+.ask-pool { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.ask-pool li { font-size: 11.5px; color: var(--text-dim); }
+.ask-pool code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text);
+}

@@ -209,7 +209,8 @@ export function AskDock() {
           <h2 className="ask-title">Ask the estate</h2>
           <p className="ask-sub">
             {health
-              ? `${health.frames.toLocaleString()} frames · ${health.parser_up ? 'local model' : 'rules only'}`
+              ? `${health.frames.toLocaleString()} frames · ${askTarget().label || 'service'}`
+                + (askTarget().fellBack ? ' · fallback' : '')
               : !ASK_CONNECTED ? 'offline'
               : waiting ? 'waiting for the service…'
               : probed ? 'not reachable'
@@ -244,9 +245,16 @@ export function AskDock() {
         {ASK_CONNECTED && probed && !health && (
           <div className="ask-offline">
             <p>
-              <b>Waiting for the search service.</b> Nothing is answering at{' '}
-              <code>{askTarget().base || 'the configured address'}</code> yet.
+              <b>Waiting for a search service.</b> None of the{' '}
+              {askTarget().pool.length} configured{' '}
+              {askTarget().pool.length === 1 ? 'address is' : 'addresses are'}{' '}
+              answering:
             </p>
+            <ul className="ask-pool">
+              {askTarget().pool.map((e) => (
+                <li key={e.base}><code>{e.base}</code> — {e.label}</li>
+              ))}
+            </ul>
             <p>
               Start it with <code>.\start.ps1</code> on the machine that holds the
               models. This panel is checking every few seconds and will connect on
