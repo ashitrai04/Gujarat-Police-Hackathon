@@ -323,12 +323,125 @@ class Registry:
 
 # ─────────────────────────────────────────────────────────────────────
 
+
+
+def use_stronger_detector(weights: str, imgsz: int) -> None:
+    """Swap the vehicle detector and widen the inference size.
+
+    The upstream pipeline hard-codes `YOLO("yolo11m.pt")` and `imgsz=1280`,
+    which is a sensible pair for a laptop and leaves most of an A100 unused.
+    Both matter here and they matter for different reasons:
+
+      - Model size helps with partial and overlapping vehicles — a bike behind
+        a bus, a car half out of frame — which is most of what a junction
+        camera sees.
+      - Inference size helps with distant ones. A 1920px frame at imgsz 1280 is
+        downscaled by a third before the detector sees it, and a vehicle 40m
+        out loses the pixels it needed. This is usually the larger effect on
+        CCTV, where the interesting vehicle is rarely the nearest.
+
+    Patched rather than forked, the same way PaddleOCR is swapped in above: the
+    upstream repo is cloned at run time and a fork would have to be rebased
+    every time it changes.
+    """
+    import sentinel_pipeline as sp
+    from ultralytics import YOLO as _YOLO
+
+    class _Wrapped:
+        """Looks like ultralytics' YOLO, but with our weights and size."""
+
+        def __init__(self, path):
+            # Only the base detector is substituted. The night model is the
+            # team's own, trained on Indian vehicle classes, and swapping it
+            # for a COCO model would lose the classes the pipeline then asks
+            # for by index.
+            self._m = _YOLO(weights if str(path).endswith('yolo11m.pt') else path)
+
+        def track(self, frame, **kw):
+            kw['imgsz'] = imgsz
+            return self._m.track(frame, **kw)
+
+        def predict(self, frame, **kw):
+            kw['imgsz'] = imgsz
+            return self._m.predict(frame, **kw)
+
+        def __getattr__(self, name):
+            return getattr(self._m, name)
+
+    sp.YOLO = _Wrapped
+    print(f'[worker] detector: {weights} at imgsz {imgsz}')
+
+
+
+
+# ── Accuracy profiles ──────────────────────────────────────────────────
+#
+# The same code runs on a 6 GB laptop card and on a 40 GB A100, and the right
+# settings are not close to each other. Rather than one compromise that suits
+# neither, the hardware picks.
+PROFILES = {
+    'balanced': {        # what a laptop can hold
+        'weights': 'yolo11m.pt', 'imgsz': 1280, 'det_conf': 0.35,
+        'plate_conf': 0.25, 'plate_min_w': 45, 'track_buffer': 90,
+        'frame_skip': 2, 'vram_gb': 4,
+    },
+    'accurate': {        # a real card, and the reason to have one
+        'weights': 'yolo11x.pt', 'imgsz': 1536, 'det_conf': 0.25,
+        'plate_conf': 0.20, 'plate_min_w': 32, 'track_buffer': 150,
+        'frame_skip': 1, 'vram_gb': 9,
+    },
+    'fast': {            # triage, or a CPU host
+        'weights': 'yolo11s.pt', 'imgsz': 960, 'det_conf': 0.40,
+        'plate_conf': 0.30, 'plate_min_w': 50, 'track_buffer': 60,
+        'frame_skip': 3, 'vram_gb': 2,
+    },
+}
+
+
+def free_vram_gb() -> float:
+    """Free memory on the emptiest visible GPU, in GB. 0 if there is none."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return 0.0
+        best = 0.0
+        for i in range(torch.cuda.device_count()):
+            free, _ = torch.cuda.mem_get_info(i)
+            best = max(best, free / 1e9)
+        return best
+    except Exception:                                    # noqa: BLE001
+        return 0.0
+
+
+def default_profile() -> str:
+    """Pick by what is actually free, not by what is installed.
+
+    This host is shared: both its A100s regularly have 30 GB taken by someone
+    else's job. Choosing on total memory would select a profile that cannot be
+    allocated, and the failure arrives several minutes into a pass.
+    """
+    name = os.environ.get('SENTINEL_PROFILE', '').strip()
+    if name in PROFILES:
+        return name
+    free = free_vram_gb()
+    for candidate in ('accurate', 'balanced', 'fast'):
+        if free >= PROFILES[candidate]['vram_gb']:
+            return candidate
+    return 'fast'
+
+
 def analyse(video: str, camera_id: str, *, tiled=False, frame_skip=2,
-            mode='auto', night_model=None) -> dict:
+            mode='auto', night_model=None, profile=None) -> dict:
     sys.path.insert(0, PIPELINE_DIR)
     use_paddle_ocr()
     if tiled:
         use_tiled_detection()
+
+    # Accuracy profile. `balanced` is what a laptop can hold; `accurate` is
+    # what the detection is actually capable of given a real card, and is the
+    # default when one is present.
+    prof = dict(PROFILES[profile or default_profile()])
+    use_stronger_detector(prof['weights'], prof['imgsz'])
 
     import sentinel_pipeline as sp
 
@@ -356,10 +469,17 @@ def analyse(video: str, camera_id: str, *, tiled=False, frame_skip=2,
         'video': video,
         'camera_name': camera_id,
         'mode': mode,
-        'frame_skip': frame_skip,
+        'frame_skip': prof.get('frame_skip', frame_skip),
         'save_video': False,
-        'plate_min_w': 45,
         'output_dir': os.environ.get('SENTINEL_OUT', 'output'),
+        # Lower than upstream on purpose. A missed vehicle is gone; a spurious
+        # one is a track that ByteTrack drops within a few frames, and a plate
+        # that never reads. The asymmetry is the whole argument for a loose
+        # detector gate and a strict reading gate.
+        'det_conf': prof['det_conf'],
+        'plate_conf': prof['plate_conf'],
+        'plate_min_w': prof['plate_min_w'],
+        'track_buffer': prof['track_buffer'],
     })
     if night_model:
         cfg['night_model'] = night_model
@@ -379,13 +499,15 @@ def main() -> None:
     ap.add_argument('--frame-skip', type=int, default=2)
     ap.add_argument('--mode', default='auto', choices=['auto', 'day', 'night'])
     ap.add_argument('--night-model', default=None)
+    ap.add_argument('--profile', default=None, choices=list(PROFILES),
+                    help='accuracy profile; default is chosen from free VRAM')
     ap.add_argument('--lat', type=float, default=None)
     ap.add_argument('--lng', type=float, default=None)
     args = ap.parse_args()
 
     result = analyse(args.video, args.camera, tiled=args.tiled,
                      frame_skip=args.frame_skip, mode=args.mode,
-                     night_model=args.night_model)
+                     night_model=args.night_model, profile=args.profile)
 
     v = result['vehicles']
     print(f"\n[worker] {args.camera}: {v['total_tracked']} vehicles, "

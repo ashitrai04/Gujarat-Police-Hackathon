@@ -837,6 +837,118 @@ def tunnel(domain=None, authtoken=None):
     return url
 
 
+
+
+# ── Live ANPR ──────────────────────────────────────────────────────────
+
+_ANPR_GUARD = r'''#!/usr/bin/env bash
+source "$SENTINEL_HOME/env.sh"
+[ -f "$VENV/bin/activate" ] && source "$VENV/bin/activate"
+PY="${ASK_PYTHON:-python}"
+LOG="$SENTINEL_HOME/anpr.log"
+backoff=10
+while true; do
+  echo "[guard $(date -Is)] starting the ANPR worker" >> "$LOG"
+  cd "$PIPELINE_DIR"
+  "$PY" -u live_worker.py --seconds "${ANPR_SECONDS:-30}" \
+      --source "${ANPR_SOURCE:-hls}" >> "$LOG" 2>&1 &
+  child=$!
+  echo "$child" > "$SENTINEL_HOME/anpr.pid"
+  wait "$child" || true
+  echo "[guard $(date -Is)] worker exited; restarting in ${backoff}s" >> "$LOG"
+  sleep "$backoff"
+  backoff=$(( backoff < 120 ? backoff * 2 : 120 ))
+done
+'''
+
+
+def anpr_start(seconds=30, source='hls'):
+    """Read plates off every camera in the registry, continuously.
+
+    This is what makes "has this vehicle been past that camera?" answerable. A
+    department onboards a camera; the worker re-reads the registry each cycle,
+    so the new camera joins the rotation without anyone restarting anything,
+    and from then on its sightings accumulate in `detections` where the trace
+    and the event search already look.
+
+    Detached and watchdogged for the same reasons the search service is: the
+    card is shared, and a worker that a colleague's job can quietly end is not
+    one a control room can rely on.
+    """
+    if not os.path.isfile(f'{PIPELINE}/live_worker.py'):
+        print('!! live_worker.py missing — git pull in the repo first')
+        return False
+    if _anpr_running():
+        print('==> already running')
+        return anpr_status()
+
+    _write_env()
+    with open(f'{HOME}/env.sh', 'a') as f:
+        f.write(f'export ANPR_SECONDS="{seconds}"\n')
+        f.write(f'export ANPR_SOURCE="{source}"\n')
+        f.write(f'export SENTINEL_OUT="{HOME}/anpr-out"\n')
+        f.write(f'export SENTINEL_TMP="{HOME}/anpr-tmp"\n')
+    os.makedirs(f'{HOME}/anpr-out', exist_ok=True)
+    os.makedirs(f'{HOME}/anpr-tmp', exist_ok=True)
+
+    if not os.environ.get('SUPABASE_SERVICE_KEY') and \
+            'SUPABASE_SERVICE_KEY' not in open(f'{HOME}/env.sh').read():
+        print(textwrap.dedent("""
+            !! SUPABASE_SERVICE_KEY is not set, so sightings will be printed
+               rather than stored, and nothing will be searchable afterwards.
+
+               Add it to ~/sentinel/env.sh:
+                 export SUPABASE_URL="https://<project>.supabase.co"
+                 export SUPABASE_SERVICE_KEY="eyJ..."
+
+               It is the service-role key: server-side only, never in a browser
+               bundle or a committed file.
+        """))
+
+    with open(f'{HOME}/anpr_guard.sh', 'w') as f:
+        f.write(_ANPR_GUARD)
+    os.chmod(f'{HOME}/anpr_guard.sh', 0o755)
+    open(f'{HOME}/anpr.log', 'w').close()
+
+    subprocess.Popen(
+        f'source {HOME}/env.sh && exec setsid bash {HOME}/anpr_guard.sh '
+        f'> /dev/null 2>&1 < /dev/null &',
+        shell=True, executable='/bin/bash',
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+
+    print('==> ANPR worker starting; first camera takes a minute (models load)')
+    time.sleep(6)
+    return anpr_status()
+
+
+def _anpr_running():
+    rc, out = sh('pgrep -f live_worker.py', quiet=True)
+    return rc == 0 and out.strip() != ''
+
+
+def anpr_status():
+    running = _anpr_running()
+    print(f'  ANPR worker : {"running" if running else "stopped"}')
+    if os.path.isfile(f'{HOME}/anpr.log'):
+        sh(f'grep -c "stored" {HOME}/anpr.log 2>/dev/null '
+           f'| xargs -I{{}} echo "  cameras read : {{}}"', quiet=False)
+        print('  last lines:')
+        sh(f'tail -n 6 {HOME}/anpr.log')
+    return running
+
+
+def anpr_stop():
+    sh(f'[ -f {HOME}/anpr.pid ] && kill $(cat {HOME}/anpr.pid) 2>/dev/null; '
+       f'pkill -f anpr_guard.sh; pkill -f live_worker.py; true', quiet=True)
+    time.sleep(2)
+    return anpr_status()
+
+
+def anpr_logs(n=60):
+    sh(f'tail -n {n} {HOME}/anpr.log 2>/dev/null || echo "(no log yet)"')
+
+
 def doctor():
     """Check the whole chain and say which link is broken.
 
@@ -961,6 +1073,7 @@ def ask(prompt, k=5, verify=False):
 print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
+print('anpr :  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
 print('debug:  ollama_debug()  ollama_restart()')
