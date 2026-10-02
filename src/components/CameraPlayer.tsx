@@ -28,6 +28,14 @@ const MAX_RECOVERIES = 2;
 const CONNECT_TIMEOUT_MS = 12_000;
 
 /**
+ * How often a tile playing the archive re-checks whether live has come back.
+ *
+ * Slow enough that a full wall costs nothing, fast enough that nobody watches
+ * yesterday's footage for long after the feed returns.
+ */
+const LIVE_WATCH_MS = 60_000;
+
+/**
  * HLS is the only route a browser can take.
  *
  * The grid's other two endpoints are raw media on a bare public IP: RTSP on
@@ -84,6 +92,53 @@ export function CameraPlayer({
   const [msg, setMsg] = useState('');
   const [attempt, setAttempt] = useState(0);
 
+  /*
+   * Keep looking for the live feed behind the recorded one.
+   *
+   * The reason a tile falls back is almost never permanent: a proxy restarted,
+   * a session was evicted, an access key was finally set on the deployment.
+   * Without this an operator has to reload the page to find out, and has no
+   * way of knowing when that would be worth doing.
+   *
+   * So the live playlist is polled quietly while the archive plays, and the
+   * first time it answers with a real manifest the tile reconnects to it. A
+   * tile showing the archive on purpose (source = 'archive') is left alone —
+   * that is a choice, not a substitution.
+   */
+  const substituting = phase === 'archive' && source === 'live';
+  useEffect(() => {
+    if (!substituting) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const look = async () => {
+      if (cancelled) return;
+      try {
+        const r = await fetch(camera.streamUrl, {
+          headers: { range: 'bytes=0-200' },
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!cancelled && r.ok) {
+          // The proxy answers failures as text with a 2xx in some paths, so
+          // the status alone is not evidence. A playlist starts with #EXTM3U.
+          const head = (await r.text()).slice(0, 64);
+          if (head.includes('#EXTM3U')) {
+            setAttempt((n) => n + 1);   // re-runs the player, now on live
+            return;
+          }
+        }
+      } catch {
+        /* still down; ask again later */
+      }
+      if (!cancelled) timer = setTimeout(look, LIVE_WATCH_MS);
+    };
+
+    // Jittered, so sixteen tiles do not all ask at the same instant.
+    timer = setTimeout(look, LIVE_WATCH_MS + Math.random() * 20_000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [substituting, camera.streamUrl]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -92,13 +147,16 @@ export function CameraPlayer({
       setMsg('No signal');
       return;
     }
-    // Probe says nothing is serving. Sit quiet — `route` flipping to a real
-    // value re-runs this effect and the tile recovers on its own.
-    if (route === null) {
-      setPhase('waiting');
-      setMsg('Waiting for stream');
-      return;
-    }
+    // The probe saying nothing is serving used to return here and wait for
+    // `route` to flip, which left the tile on "Waiting for stream"
+    // indefinitely whenever live was down for a reason the probe could not
+    // fix — a proxy answering 502 because its access key is unset, say. A wall
+    // of empty tiles beside a perfectly good archive is the worst of both:
+    // nothing to watch, and no sign of what is wrong.
+    //
+    // It now falls through to `begin()`, which starts the archive straight
+    // away when the probe has already ruled live out, and `liveWatch` below
+    // keeps looking for the live feed and swaps to it when it returns.
 
     let hls: Hls | null = null;
     let cancelled = false;
@@ -231,10 +289,22 @@ export function CameraPlayer({
         el.play().catch(() => {});
         return;
       }
-      if (source === 'archive') {
+      // Deliberately recorded, or live already known to be down: go straight
+      // to the archive rather than spending CONNECT_TIMEOUT_MS proving what
+      // the probe has already established.
+      if (source === 'archive' || route === null) {
         const alt = fallbackUrl(camera.id);
-        if (alt) startHls(alt, true);
-        else fail('No recording for this camera');
+        if (alt) {
+          startHls(alt, true);
+          return;
+        }
+        if (source === 'archive') {
+          fail('No recording for this camera');
+          return;
+        }
+        // No archive either: say so rather than sitting silent.
+        setPhase('waiting');
+        setMsg('Waiting for stream');
         return;
       }
       startHls(camera.streamUrl);
