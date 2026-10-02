@@ -34,6 +34,7 @@ WHY IT DETACHES
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -411,6 +412,9 @@ def _write_env():
             # memory that may have been taken meanwhile, and a query then waits
             # on a fight it cannot win.
             export OLLAMA_KEEP_ALIVE=24h
+            # Secrets live in their own file, because this one is rewritten
+            # from scratch every time the service starts.
+            [ -f "{HOME}/creds.sh" ] && . "{HOME}/creds.sh"
             """))
     os.makedirs(f'{HOME}/ollama-models', exist_ok=True)
 
@@ -839,6 +843,95 @@ def tunnel(domain=None, authtoken=None):
 
 
 
+# ── Credentials ────────────────────────────────────────────────────────
+
+CRED_KEYS = (
+    'SUPABASE_URL',
+    'SUPABASE_SERVICE_KEY',
+    'SENTINEL_ACCESS_EMAIL',
+    'SENTINEL_ACCESS_KEY',
+)
+
+
+def set_credentials(**kw):
+    """Record the keys the ANPR worker needs, in ~/sentinel/creds.sh.
+
+        set_credentials(
+            SUPABASE_URL="https://xxxx.supabase.co",
+            SUPABASE_SERVICE_KEY="eyJ...",
+            SENTINEL_ACCESS_EMAIL="...",
+            SENTINEL_ACCESS_KEY="...",
+        )
+
+    Kept in their own file, mode 600, sourced by env.sh. Two reasons it is not
+    env.sh itself: env.sh is rewritten from scratch every time the service
+    starts, and a secret that lives in a generated file gets regenerated away
+    at the worst moment. Separating them also means env.sh can be shown to
+    somebody without showing them the keys.
+
+    Values are read from this cell, never from the repository. The service-role
+    key in particular bypasses row-level security entirely — it belongs in a
+    shell on a server and nowhere else, not in .env, not in a commit, not in a
+    message.
+    """
+    path = f'{HOME}/creds.sh'
+    have = {}
+    if os.path.isfile(path):
+        for line in open(path):
+            m = re.match(r'export ([A-Z_]+)="(.*)"$', line.strip())
+            if m:
+                have[m.group(1)] = m.group(2)
+
+    for k, v in kw.items():
+        key = k.upper()
+        if key not in CRED_KEYS:
+            print(f'  ignoring unknown key {key}')
+            continue
+        have[key] = str(v).strip()
+
+    with open(path, 'w') as f:
+        f.write('# Written by set_credentials(). Not generated, not committed.\n')
+        for k in CRED_KEYS:
+            if have.get(k):
+                f.write(f'export {k}="{have[k]}"\n')
+    os.chmod(path, 0o600)
+
+    # env.sh is regenerated often, so it sources this rather than copying it.
+    _write_env()
+
+    print(f'  written to {path} (mode 600)')
+    for k in CRED_KEYS:
+        v = have.get(k, '')
+        print(f'    {k:24s} {"set, " + str(len(v)) + " chars" if v else "MISSING"}')
+    missing = [k for k in CRED_KEYS if not have.get(k)]
+    if missing:
+        print(f'\n  still missing: {", ".join(missing)}')
+    else:
+        print('\n  all set. Restart the worker:  anpr_stop(); anpr_start()')
+    return not missing
+
+
+def check_feeds(host='https://cctv.corp8.cloud'):
+    """Can this host reach the camera grid, and sign in to it?
+
+    Worth answering separately from "are the credentials set", because they
+    fail identically from the worker's point of view and have nothing to do
+    with each other. A research network that blocks outbound traffic to an
+    unfamiliar origin looks exactly like a missing access key in the log.
+    """
+    sh(f'source {HOME}/env.sh 2>/dev/null; '
+       f'echo "  key set      : $([ -n \"$SENTINEL_ACCESS_KEY\" ] && echo yes || echo NO)"')
+    print('  DNS          :', end=' ')
+    sh(f'getent hosts {host.split("//")[1]} | head -1 || echo "does not resolve"')
+    print('  catalogue    :', end=' ')
+    sh(f'curl -s -o /dev/null -w "HTTP %{{http_code}} in %{{time_total}}s\n" -m 25 '
+       f'-A "Mozilla/5.0 Chrome/131" {host}/cameras.json')
+    print()
+    print('  523 means Cloudflare reached the grid\'s origin and it did not answer:')
+    print('  the feed host is down or refusing this network, not a key problem.')
+    print('  200 with the key set means captures should work.')
+
+
 # ── Live ANPR ──────────────────────────────────────────────────────────
 
 _ANPR_GUARD = r'''#!/usr/bin/env bash
@@ -1073,6 +1166,7 @@ def ask(prompt, k=5, verify=False):
 print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
+print('creds:  set_credentials(SUPABASE_URL=..., SUPABASE_SERVICE_KEY=...)')
 print('anpr :  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
