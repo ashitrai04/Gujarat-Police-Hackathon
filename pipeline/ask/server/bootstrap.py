@@ -391,6 +391,9 @@ def _install_ollama():
 def _write_env():
     gpu = best_gpu()
     token = _token()
+    # Resolved here so the worker inherits a usable path rather than hoping
+    # `ffmpeg` is on PATH, which on this host it is not.
+    ffmpeg = ffmpeg_path()
     with open(f'{HOME}/env.sh', 'w') as f:
         f.write(textwrap.dedent(f"""\
             export SENTINEL_HOME="{HOME}"
@@ -412,6 +415,7 @@ def _write_env():
             # memory that may have been taken meanwhile, and a query then waits
             # on a fight it cannot win.
             export OLLAMA_KEEP_ALIVE=24h
+            export FFMPEG="{ffmpeg}"
             # Secrets live in their own file, because this one is rewritten
             # from scratch every time the service starts.
             [ -f "{HOME}/creds.sh" ] && . "{HOME}/creds.sh"
@@ -967,7 +971,31 @@ ANPR_REQUIREMENTS = (
     ('paddle', 'paddlepaddle', 'the runtime PaddleOCR needs'),
     ('open_image_models', 'open-image-models[onnx]', 'the plate detector'),
     ('cv2', 'opencv-python-headless', 'video decoding'),
+    # Not a library: the pipeline shells out to ffmpeg to pull each clip. The
+    # pip package carries a static binary, which is the only way to get one on
+    # a host where apt needs root — and is what the laptop already uses.
+    ('imageio_ffmpeg', 'imageio-ffmpeg', 'the ffmpeg binary, no root needed'),
 )
+
+
+def ffmpeg_path() -> str:
+    """An ffmpeg this host can actually run.
+
+    The system one if there is one, otherwise the static binary that ships
+    inside imageio-ffmpeg. The worker calls ffmpeg by name, so without this it
+    fails per camera with "No such file or directory: 'ffmpeg'" — thirty times
+    a pass, fast enough to look like a different problem entirely.
+    """
+    found = shutil.which('ffmpeg')
+    if found:
+        return found
+    script = f'{HOME}/_ffmpeg.py'
+    with open(script, 'w') as f:
+        f.write('import imageio_ffmpeg, sys\n')
+        f.write('sys.stdout.write(imageio_ffmpeg.get_ffmpeg_exe())\n')
+    rc, out = sh(f'{PY} {script}', quiet=True)
+    path = out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else ''
+    return path if path and os.path.isfile(path) else ''
 
 
 def anpr_missing() -> list:
@@ -1016,6 +1044,11 @@ def anpr_setup():
         if rc != 0:
             print(f'  !! {spec} failed to install')
 
+    ff = ffmpeg_path()
+    print(f'\n  ffmpeg: {ff or "NOT FOUND"}')
+    if ff:
+        _write_env()          # record the path for the worker
+
     still = anpr_missing()
     if still:
         print('\n!! still missing: ' + ', '.join(m for m, _, _ in still))
@@ -1050,6 +1083,11 @@ def anpr_start(seconds=30, source='hls'):
         print('!! the worker cannot import: '
               + ', '.join(m for m, _, _ in missing))
         print('   Run anpr_setup() first — it installs them.')
+        return False
+
+    if not ffmpeg_path():
+        print('!! no ffmpeg. Every capture would fail with "No such file or')
+        print('   directory". Run anpr_setup() — it installs a static one.')
         return False
     if _anpr_running():
         print('==> already running')
