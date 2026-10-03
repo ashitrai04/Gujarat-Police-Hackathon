@@ -100,8 +100,28 @@ PIPELINE_DIR = os.environ.get(
 # ─────────────────────────────────────────────────────────────────────
 
 def use_paddle_ocr() -> None:
-    """Replace EasyOCR with PaddleOCR recognition-only, keeping its interface."""
-    import easyocr
+    """Replace EasyOCR with PaddleOCR recognition-only, keeping its interface.
+
+    The upstream pipeline does `import easyocr` and calls `easyocr.Reader(...)`,
+    so the name has to exist for the patch to land on it — but nothing of
+    EasyOCR is ever executed, because PaddleReader replaces the only class
+    used. Installing it to delete it would pull a second deep-learning stack
+    and its model downloads for no inference at all, so an empty module is
+    registered instead when it is absent.
+
+    Where EasyOCR is installed (the laptop) nothing changes: the real module
+    is imported and patched exactly as before.
+    """
+    import types
+
+    try:
+        import easyocr
+    except ImportError:
+        easyocr = types.ModuleType('easyocr')
+        sys.modules['easyocr'] = easyocr
+        print('[worker] easyocr absent; registered a stub for the patch to '
+              'attach to (PaddleOCR does the reading)')
+
     from paddleocr import TextRecognition
 
     class PaddleReader:

@@ -1017,6 +1017,28 @@ def anpr_missing() -> list:
     return [r for r in ANPR_REQUIREMENTS if r[0] in absent]
 
 
+def capture_check(cam='cam08', seconds=20):
+    """Walk one capture end to end and report which layer refused.
+
+    "capture failed: no video" covers four unrelated faults -- no credentials,
+    a sign-in the grid rejected, a playlist with no segments, and ffmpeg dying
+    silently -- because it is printed whenever ffmpeg leaves no stderr behind.
+    They need different fixes, so each step is done separately here.
+
+    The default window is longer than the worker's because the most common
+    cause is a live feed that is up but publishing slowly: 5 seconds of a
+    stalled stream lands under the 50KB floor and reads as a dead camera.
+    """
+    probe = f'{PIPELINE}/ask/server/capcheck.py'
+    if not os.path.isfile(probe):
+        print('!! capcheck.py missing -- git pull in the repo first')
+        return False
+    print(f'=== one capture, step by step ({cam}, {seconds}s) ===')
+    sh(f'source {HOME}/env.sh && cd {PIPELINE} && '
+       f'PIPELINE_DIR={PIPELINE} {PY} {probe} {cam} {seconds}')
+    return True
+
+
 def anpr_setup():
     """Install what the plate pipeline imports.
 
@@ -1450,6 +1472,7 @@ print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
 print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')
 print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
+print('diag :  capture_check(cam)  -- why one capture produced no video')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
 print('        models()   — which models are on this machine')

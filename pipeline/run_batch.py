@@ -128,7 +128,15 @@ def capture(url: str, seconds: int, dest: str, session: str | None = None) -> bo
         return False
     if r.returncode != 0 or not os.path.exists(dest) or os.path.getsize(dest) < 50_000:
         tail = (r.stderr or '').strip().splitlines()
-        print(f"    capture failed: {tail[-1][:110] if tail else 'no video'}")
+        size = os.path.getsize(dest) if os.path.exists(dest) else 0
+        # Without rc and size, a stream that is up but idle is indistinguishable
+        # from one that is down: ffmpeg exits 0, writes a few KB, says nothing,
+        # and the old message blamed the absence of video for a shortage of it.
+        why = (tail[-1][:110] if tail
+               else f'no stderr; exit {r.returncode}, {size} bytes written'
+               + (' (under the 50KB floor -- stream up but idle?)'
+                  if 0 < size < 50_000 else ''))
+        print(f'    capture failed: {why}')
         return False
     return True
 
