@@ -1042,6 +1042,82 @@ def anpr_logs(n=60):
     sh(f'tail -n {n} {HOME}/anpr.log 2>/dev/null || echo "(no log yet)"')
 
 
+
+
+def models():
+    """Every model the system uses: where it is, and whether it is here yet.
+
+    They arrive at different times and from different places, which is easy to
+    lose track of. Two come down during setup(); the rest are fetched by
+    whichever component first needs them — ultralytics downloads its weights on
+    first use, so a model can be "configured" for days before it exists on
+    disk. This reports what is actually present rather than what is referenced.
+    """
+    import glob
+
+    def size(path):
+        try:
+            if os.path.isdir(path):
+                n = sum(os.path.getsize(f) for f in glob.glob(f'{path}/**/*', recursive=True)
+                        if os.path.isfile(f))
+            else:
+                n = os.path.getsize(path)
+            return f'{n / 1e6:,.0f} MB'
+        except OSError:
+            return ''
+
+    def row(name, role, path, present, extra=''):
+        mark = 'yes' if present else ' no'
+        print(f'  {mark}  {name:26s} {role:22s} {extra or (size(path) if present else "")}')
+
+    print('=== retrieval and language ===')
+    hub = os.path.expanduser('~/.cache/huggingface/hub')
+    emb = os.environ.get('ASK_EMBED_MODEL', EMB)
+    emb_dir = os.path.join(hub, 'models--' + emb.replace('/', '--'))
+    row(emb.split('/')[-1], 'scene retrieval', emb_dir, os.path.isdir(emb_dir))
+
+    tags = []
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:11434/api/tags', timeout=8) as r:
+            tags = [m['name'] for m in json.loads(r.read()).get('models', [])]
+    except Exception:                                    # noqa: BLE001
+        pass
+    want_vlm = os.environ.get('ASK_VLM_MODEL', VLM)
+    row(want_vlm, 'prompt + verify', '', want_vlm in tags,
+        ', '.join(tags) if tags else 'ollama not answering')
+
+    print('\n=== detection ===')
+    # ultralytics puts weights wherever it was run from, so look in the places
+    # this project runs things from rather than assuming one directory.
+    def find(name):
+        for d in (f'{PIPELINE}', f'{PIPELINE}/ask', HOME, os.getcwd(),
+                  os.path.expanduser('~/.config/Ultralytics')):
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p
+        return None
+
+    for name, role in (
+        ('yolo11n.pt', 'index: object counts'),
+        ('yolo11m.pt', 'ANPR: balanced profile'),
+        ('yolo11x.pt', 'ANPR: accurate profile'),
+        ('yolov8s-worldv2.pt', 'open-vocab attributes'),
+        ('FINAL_NIGHT_MODEL.pt', 'ANPR: night (optional)'),
+    ):
+        p = find(name)
+        row(name, role, p or '', bool(p))
+
+    print('\n  Plate detection and OCR (yolo-v9-t plate detector, PP-OCRv5)')
+    print('  come down on first use into ~/.cache and ~/.paddlex — not listed')
+    print('  here because neither keeps a single predictable path.')
+
+    print('\n=== notes ===')
+    print('  Anything marked "no" is not an error: ultralytics fetches weights')
+    print('  the first time something asks for them. yolo11x arrives on the')
+    print('  first ANPR pass under the accurate profile; yolov8s-worldv2 on the')
+    print('  first prompt that names an attribute such as "a red truck".')
+
+
 def doctor():
     """Check the whole chain and say which link is broken.
 
@@ -1170,4 +1246,5 @@ print('creds:  set_credentials(SUPABASE_URL=..., SUPABASE_SERVICE_KEY=...)')
 print('anpr :  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
+print('        models()   — which models are on this machine')
 print('debug:  ollama_debug()  ollama_restart()')
