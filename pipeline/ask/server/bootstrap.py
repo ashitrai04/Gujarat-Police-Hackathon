@@ -955,6 +955,76 @@ done
 '''
 
 
+
+
+# What the ANPR worker needs and the search service does not. setup() installs
+# the retrieval side; this is the reading side, and the two have almost no
+# overlap — which is why a machine can run prompt search perfectly and still
+# not have a single package the plate pipeline imports.
+ANPR_REQUIREMENTS = (
+    ('supabase', 'supabase>=2.0', 'writes sightings into the registry'),
+    ('paddleocr', 'paddleocr>=3.0', 'plate text recognition (PP-OCRv5)'),
+    ('paddle', 'paddlepaddle', 'the runtime PaddleOCR needs'),
+    ('open_image_models', 'open-image-models[onnx]', 'the plate detector'),
+    ('cv2', 'opencv-python-headless', 'video decoding'),
+)
+
+
+def anpr_missing() -> list:
+    """Which ANPR packages are absent from the environment the worker uses."""
+    names = [m for m, _, _ in ANPR_REQUIREMENTS]
+    # Written to a file and run, not passed with -c.
+    #
+    # The probe needs quotes of both kinds, and threading those through a
+    # shell command inside an f-string is how a check silently reports
+    # everything as missing — the command fails, the output is empty, and
+    # every package looks absent.
+    script = f'{HOME}/_probe.py'
+    with open(script, 'w') as f:
+        f.write('import importlib.util as u\n')
+        f.write(f'for m in {names!r}:\n')
+        f.write("    print(('OK' if u.find_spec(m) else 'NO'), m)\n")
+    _, out = sh(f'{PY} {script}', quiet=True)
+    absent = {ln.split()[1] for ln in out.splitlines() if ln.startswith('NO ')}
+    return [r for r in ANPR_REQUIREMENTS if r[0] in absent]
+
+
+def anpr_setup():
+    """Install what the plate pipeline imports.
+
+    Kept separate from setup() because the two halves are independent: a host
+    can answer prompt searches perfectly without a single one of these, and
+    somebody who only wants search should not wait on PaddlePaddle.
+
+    PaddlePaddle is installed CPU-only. The GPU build is pinned to particular
+    CUDA minor versions and picking the wrong one fails at import rather than
+    at install, which is a bad trade for a component that is not the
+    bottleneck — the plate detector's ONNX session already falls back to CPU
+    here, and the vehicle detector, which is the expensive part, runs on the
+    card through torch regardless.
+    """
+    _ensure_python()
+    missing = anpr_missing()
+    if not missing:
+        print('  all ANPR packages present')
+        return True
+
+    print('==> installing: ' + ', '.join(m for m, _, _ in missing))
+    for mod, spec, why in missing:
+        print(f'  {spec:28s} {why}')
+        rc, _ = sh(f'{PY} -m pip install -q "{spec}"')
+        if rc != 0:
+            print(f'  !! {spec} failed to install')
+
+    still = anpr_missing()
+    if still:
+        print('\n!! still missing: ' + ', '.join(m for m, _, _ in still))
+        print('   The worker imports these at start; it cannot run without them.')
+        return False
+    print('\n  done — anpr_start() will work now')
+    return True
+
+
 def anpr_start(seconds=30, source='hls'):
     """Read plates off every camera in the registry, continuously.
 
@@ -970,6 +1040,16 @@ def anpr_start(seconds=30, source='hls'):
     """
     if not os.path.isfile(f'{PIPELINE}/live_worker.py'):
         print('!! live_worker.py missing — git pull in the repo first')
+        return False
+
+    # An import error inside the worker becomes a ten-second restart loop that
+    # never does any work, so the packages are checked out here where the
+    # remedy can be named.
+    missing = anpr_missing()
+    if missing:
+        print('!! the worker cannot import: '
+              + ', '.join(m for m, _, _ in missing))
+        print('   Run anpr_setup() first — it installs them.')
         return False
     if _anpr_running():
         print('==> already running')
@@ -1331,7 +1411,7 @@ print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
 print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')
-print('anpr :  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
+print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
 print('        models()   — which models are on this machine')
