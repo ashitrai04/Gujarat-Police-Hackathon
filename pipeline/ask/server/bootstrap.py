@@ -1039,6 +1039,60 @@ def capture_check(cam='cam08', seconds=20):
     return True
 
 
+def anpr_test(recording=None, camera='cam08', profile=None):
+    """Run the full plate pipeline over a recording already on this host.
+
+    This is the measurement that does not depend on the feeds. The live worker
+    can only be judged once detection, OCR, the Supabase write and the evidence
+    images are known to work, and a capture that returns nothing tells you
+    nothing about any of them. A recording removes that variable: whatever
+    comes out is the pipeline's own accuracy.
+
+    The camera id is what the rows are filed under, so pass the one the
+    recording actually came from if you want the result searchable in place.
+    """
+    vids = sorted(f for f in os.listdir(FOOTAGE)
+                  if f.lower().endswith('.mp4')) if os.path.isdir(FOOTAGE) else []
+    if recording is None:
+        if not vids:
+            print(f'!! no .mp4 in {FOOTAGE}')
+            print('   Upload one, or run collect_footage() if the upload '
+                  'landed elsewhere.')
+            return False
+        recording = vids[0]
+        if len(vids) > 1:
+            print(f'  {len(vids)} recordings here; using {recording}')
+            print(f"  others: {', '.join(vids[1:])}")
+    path = recording if os.path.isabs(recording) else f'{FOOTAGE}/{recording}'
+    if not os.path.isfile(path):
+        print(f'!! not a file: {path}')
+        return False
+
+    missing = anpr_missing()
+    if missing:
+        print('!! cannot import: ' + ', '.join(m for m, _, _ in missing))
+        print('   Run anpr_setup() first.')
+        return False
+
+    size = os.path.getsize(path) / 1e6
+    print(f'=== plate pipeline over {os.path.basename(path)} '
+          f'({size:.0f} MB), filed as {camera} ===')
+    # Writes real rows, because a test that skips the write does not test the
+    # half that has broken most often.
+    if not _cred('SUPABASE_SERVICE_KEY'):
+        print('  no service key in creds.sh -- detections will be printed, '
+              'not stored')
+    flag = f' --profile {profile}' if profile else ''
+    sh(f'source {HOME}/env.sh && cd {PIPELINE} && '
+       f'{PY} sentinel_worker.py "{path}" --camera {camera}{flag}')
+    print()
+    print('  "N vehicles, M plates" is the accuracy figure: M/N is how often a')
+    print('  tracked vehicle gave up a readable plate. "K detections recorded"')
+    print('  above zero means the Supabase path works too, and the only thing')
+    print('  left unproven is the feed.')
+    return True
+
+
 def anpr_setup():
     """Install what the plate pipeline imports.
 
@@ -1473,6 +1527,7 @@ print('        status()  logs()  stop()')
 print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')
 print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('diag :  capture_check(cam)  -- why one capture produced no video')
+print('        anpr_test()         -- plate accuracy on a recording')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
 print('        models()   — which models are on this machine')
