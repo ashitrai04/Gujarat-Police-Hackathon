@@ -984,19 +984,41 @@ def anpr_start(seconds=30, source='hls'):
     os.makedirs(f'{HOME}/anpr-out', exist_ok=True)
     os.makedirs(f'{HOME}/anpr-tmp', exist_ok=True)
 
-    if not os.environ.get('SUPABASE_SERVICE_KEY') and \
-            'SUPABASE_SERVICE_KEY' not in open(f'{HOME}/env.sh').read():
+    # Check the key BEFORE starting the watchdog.
+    #
+    # The worker validates it too, but by then it is inside a restart loop that
+    # backs off to two minutes, repeating the same line and doing nothing. The
+    # earlier version of this check read env.sh, which never contains the key —
+    # so it warned every time, including when everything was correct, and the
+    # warning stopped meaning anything.
+    key = _cred('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_SERVICE_KEY', '')
+    if not key:
         print(textwrap.dedent("""
-            !! SUPABASE_SERVICE_KEY is not set, so sightings will be printed
-               rather than stored, and nothing will be searchable afterwards.
+            !! No SUPABASE_SERVICE_KEY, so sightings would be printed rather
+               than stored and nothing would become searchable. Set it with:
 
-               Add it to ~/sentinel/env.sh:
-                 export SUPABASE_URL="https://<project>.supabase.co"
-                 export SUPABASE_SERVICE_KEY="eyJ..."
+                 set_credentials(SUPABASE_URL="...", SUPABASE_SERVICE_KEY="...",
+                                 SENTINEL_ACCESS_EMAIL="...", SENTINEL_ACCESS_KEY="...")
 
                It is the service-role key: server-side only, never in a browser
                bundle or a committed file.
         """))
+        return False
+    if key.count('.') != 2 or len(key) < 100:
+        print(textwrap.dedent(f"""
+            !! SUPABASE_SERVICE_KEY is not a JWT: {len(key)} characters,
+               {key.count('.')} dots. A real one is roughly 200 characters with
+               exactly two dots.
+
+               {'That is the placeholder from an example, not a key.'
+                if set(key) <= set('eyJ.') else 'It looks truncated.'}
+
+               Not starting — the worker would restart on this every ten
+               seconds without doing any work. Run creds_check() to see the
+               shape of what is stored, then set_credentials() with the whole
+               value.
+        """))
+        return False
 
     with open(f'{HOME}/anpr_guard.sh', 'w') as f:
         f.write(_ANPR_GUARD)
@@ -1044,6 +1066,20 @@ def anpr_logs(n=60):
 
 
 
+
+
+
+
+def _cred(key: str) -> str:
+    """One credential as creds.sh actually holds it."""
+    path = f'{HOME}/creds.sh'
+    if not os.path.isfile(path):
+        return ''
+    for line in open(path):
+        m = re.match(rf'export {key}="(.*)"\s*$', line.rstrip('\n'))
+        if m:
+            return m.group(1)
+    return ''
 
 
 def creds_check():
