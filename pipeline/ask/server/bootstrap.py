@@ -1044,6 +1044,58 @@ def anpr_logs(n=60):
 
 
 
+
+
+def creds_check():
+    """Show the SHAPE of each credential, never the value.
+
+    "Not a JWT" says a key is wrong without saying how, and the usual causes —
+    a paste that lost its tail, a value that never reached the file, a stale
+    one still in the shell — are indistinguishable from the message. Length,
+    dot count and the first and last few characters separate them, and none of
+    that is the secret.
+
+    A Supabase key is a JWT: three dot-separated parts, well over 100
+    characters. Two dots and ~200 characters is right; anything shorter was
+    truncated.
+    """
+    def shape(v):
+        if not v:
+            return 'EMPTY'
+        return (f'{len(v):4d} chars, {v.count(".")} dots, '
+                f'{v[:6]}…{v[-4:]}')
+
+    print(f'=== {HOME}/creds.sh ===')
+    path = f'{HOME}/creds.sh'
+    if not os.path.isfile(path):
+        print('  does not exist — run set_credentials(...)')
+    else:
+        found = {}
+        for line in open(path):
+            m = re.match(r'export ([A-Z_]+)="(.*)"\s*$', line.rstrip('\n'))
+            if m:
+                found[m.group(1)] = m.group(2)
+            elif line.strip() and not line.startswith('#'):
+                print(f'  UNPARSEABLE LINE: {line.strip()[:40]}…')
+        for k in CRED_KEYS:
+            print(f'  {k:24s} {shape(found.get(k, ""))}')
+        bad = [k for k in ('SUPABASE_SERVICE_KEY',)
+               if found.get(k) and found[k].count('.') != 2]
+        if bad:
+            print(f'\n  !! {", ".join(bad)} is not a JWT. Most likely the paste')
+            print('     lost its tail. Re-run set_credentials() with the full value.')
+
+    print('\n=== as the worker would see it ===')
+    sh(f'source {HOME}/env.sh 2>/dev/null; '
+       f'for k in {" ".join(CRED_KEYS)}; do '
+       f'v=$(eval echo \\$$k); '
+       f'if [ -z "$v" ]; then echo "  $k: EMPTY"; '
+       f'else echo "  $k: ${{#v}} chars, $(echo "$v" | tr -cd . | wc -c) dots"; fi; done')
+
+    print('\n  env.sh sources creds.sh, so a difference between the two blocks')
+    print('  means env.sh is stale — any start() or anpr_start() rewrites it.')
+
+
 def models():
     """Every model the system uses: where it is, and whether it is here yet.
 
@@ -1242,7 +1294,7 @@ def ask(prompt, k=5, verify=False):
 print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
-print('creds:  set_credentials(SUPABASE_URL=..., SUPABASE_SERVICE_KEY=...)')
+print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')
 print('anpr :  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
