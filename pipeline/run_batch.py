@@ -25,6 +25,7 @@ import sys
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -108,6 +109,94 @@ def registry_cameras() -> list[dict]:
             for c in cams]
 
 
+def hls_fetch(url: str, seconds: int, dest: str,
+              session: str | None = None) -> bool:
+    """Pull an HLS clip with urllib instead of the ffmpeg CLI.
+
+    The static ffmpeg the server has to use (no root, so the binary comes from
+    the imageio-ffmpeg wheel) segfaults on this stream before writing a byte,
+    and a SIGSEGV leaves no stderr to act on. The authenticated fetch already
+    works in Python -- that is how the playlist was read in the first place --
+    so the segments are downloaded here and concatenated.
+
+    Concatenated MPEG-TS segments are a valid stream on their own: that is what
+    the container is for, and it is why HLS can be played by appending. The
+    bytes go into `dest` under whatever name the caller chose, because the
+    decoders downstream sniff the content rather than trusting the extension.
+
+    Live playlists are taken from the end, so a clip is the most recent
+    footage rather than whatever is oldest in the window.
+    """
+    def get(u: str) -> bytes:
+        req = urllib.request.Request(u, headers={
+            'User-Agent': UA,
+            **({'Cookie': 'sentinel=' + session} if session else {})})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+
+    try:
+        body = get(url).decode('utf8', 'replace')
+    except Exception as e:
+        print(f'    playlist unreadable: {type(e).__name__}: {e}')
+        return False
+
+    def entries(text: str) -> list[tuple[float, str]]:
+        out, dur = [], 0.0
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith('#EXTINF:'):
+                try:
+                    dur = float(line[8:].split(',')[0])
+                except ValueError:
+                    dur = 0.0
+            elif line and not line.startswith('#'):
+                out.append((dur, line))
+                dur = 0.0
+        return out
+
+    items = entries(body)
+    # A master playlist lists variants, not segments. Follow the first one;
+    # the grid serves a single rendition, so there is nothing to choose.
+    if items and items[0][1].endswith('.m3u8'):
+        url = urllib.parse.urljoin(url, items[0][1])
+        try:
+            items = entries(get(url).decode('utf8', 'replace'))
+        except Exception as e:
+            print(f'    variant unreadable: {type(e).__name__}: {e}')
+            return False
+    if not items:
+        print('    playlist lists no segments (camera publishing nothing)')
+        return False
+
+    # Walk back from the live edge until the requested duration is covered.
+    # Unknown durations fall back to a typical segment length so a playlist
+    # without EXTINF still yields roughly the right amount.
+    chosen, total = [], 0.0
+    for dur, uri in reversed(items):
+        chosen.append(uri)
+        total += dur or 4.0
+        if total >= seconds:
+            break
+    chosen.reverse()
+
+    written = 0
+    try:
+        with open(dest, 'wb') as f:
+            for uri in chosen:
+                f.write(get(urllib.parse.urljoin(url, uri)))
+                written = f.tell()
+    except Exception as e:
+        print(f'    segment fetch stopped after {written/1e6:.2f} MB: '
+              f'{type(e).__name__}: {e}')
+
+    if written < 50_000:
+        print(f'    hls fetch got only {written} bytes')
+        return False
+    print(f'    hls fetch: {len(chosen)} segments, {written/1e6:.1f} MB, '
+          f'~{total:.0f}s')
+    return True
+
+
 def capture(url: str, seconds: int, dest: str, session: str | None = None) -> bool:
     import subprocess
     ff = os.environ.get('FFMPEG', 'ffmpeg')
@@ -136,7 +225,12 @@ def capture(url: str, seconds: int, dest: str, session: str | None = None) -> bo
                else f'no stderr; exit {r.returncode}, {size} bytes written'
                + (' (under the 50KB floor -- stream up but idle?)'
                   if 0 < size < 50_000 else ''))
-        print(f'    capture failed: {why}')
+        print(f'    ffmpeg capture failed: {why}')
+        # A crash in the binary is not a reason to lose the camera: the same
+        # clip can be fetched over HTTP, which is how the playlist was read.
+        if url.startswith(('http://', 'https://')) and '.m3u8' in url:
+            print('    falling back to the HTTP fetch')
+            return hls_fetch(url, seconds, dest, session)
         return False
     return True
 

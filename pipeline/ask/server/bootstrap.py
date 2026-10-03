@@ -1093,6 +1093,23 @@ def anpr_test(recording=None, camera='cam08', profile=None):
     return True
 
 
+def ffmpeg_check(cam='cam08'):
+    """Work out which ffmpeg capability is broken, and whether it matters.
+
+    Called when a capture dies of a signal rather than an error. A SIGSEGV
+    leaves no stderr, so the binary, TLS, the -headers option and decoding are
+    exercised one at a time, and the same fetch is then done in Python to see
+    whether the CLI is needed at all.
+    """
+    probe = f'{PIPELINE}/ask/server/ffcheck.py'
+    if not os.path.isfile(probe):
+        print('!! ffcheck.py missing -- git pull in the repo first')
+        return False
+    sh(f'source {HOME}/env.sh && cd {PIPELINE} && '
+       f'PIPELINE_DIR={PIPELINE} {PY} {probe} {cam}')
+    return True
+
+
 def anpr_setup():
     """Install what the plate pipeline imports.
 
@@ -1528,6 +1545,7 @@ print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')
 print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('diag :  capture_check(cam)  -- why one capture produced no video')
 print('        anpr_test()         -- plate accuracy on a recording')
+print('        ffmpeg_check()      -- which ffmpeg capability is broken')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
 print('        models()   — which models are on this machine')
