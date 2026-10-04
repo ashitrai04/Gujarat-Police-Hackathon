@@ -27,6 +27,20 @@ where a pass can be interrupted, retried or skipped without losing a track
 halfway through. Recall over a day is set by how often each camera comes round,
 not by whether the reading is continuous.
 
+CROWD, FIRE AND ACCIDENT
+------------------------
+--events adds scene analysis to the same pass. It deliberately shares the clip
+that was already captured rather than running as a second worker, for three
+reasons: the grid allows one session per address, so a second worker signing in
+would invalidate this one's cookie; capturing each camera twice doubles the
+bandwidth for no new information; and decoding is a real cost better paid once.
+Plate reading and scene analysis want the same thirty seconds of footage, so
+they get the same thirty seconds.
+
+The two are wrapped separately. A missing image/text model should cost the
+events and not the plates, and a plate pass that throws should not discard
+scene findings from a clip that has already been paid for.
+
 ORDERING
 --------
 Cameras are visited in order of how long it has been since each was last read,
@@ -78,6 +92,11 @@ def main() -> None:
                     help='how often to re-read the registry, in seconds')
     ap.add_argument('--tmp', default=os.environ.get('SENTINEL_TMP', '/tmp/sentinel-live'))
     ap.add_argument('--once', action='store_true', help='one pass, then exit')
+    ap.add_argument('--events', default='',
+                    help='also run scene analysis on the same clip: a comma '
+                         'list of crowd,fire,accident (default: none)')
+    ap.add_argument('--event-device', default=None, choices=['gpu', 'cpu'],
+                    help='override; the default follows free VRAM')
     args = ap.parse_args()
 
     signal.signal(signal.SIGINT, _handle)
@@ -86,6 +105,24 @@ def main() -> None:
 
     reg = Registry()
     profile = args.profile or default_profile()
+
+    # Imported only when asked for, so a host without the retrieval model can
+    # still read plates. An import failure is reported once here rather than
+    # once per camera forever.
+    kinds = tuple(k.strip() for k in args.events.split(',') if k.strip())
+    ev_mod = ev_reg = None
+    if kinds:
+        try:
+            import events as ev_mod
+            ev_reg = ev_mod.EventRegistry()
+            dev, plan = ev_mod.device_plan()
+            print(f'[live] scene analysis: {", ".join(kinds)} on {dev} '
+                  f'({plan["weights"]}, a frame every {plan["every_s"]}s)',
+                  flush=True)
+        except Exception as e:                           # noqa: BLE001
+            print(f'[live] scene analysis unavailable ({e}); plates only',
+                  flush=True)
+            kinds = ()
     print(f'[live] profile {profile}, {args.seconds}s per camera over {args.source}',
           flush=True)
     if not reg.enabled:
@@ -154,21 +191,51 @@ def main() -> None:
                 continue
 
             try:
-                started = datetime.now(timezone.utc)
-                result = analyse(dest, cid, profile=profile)
-                v = result['vehicles']
-                # out_dir is passed so each sighting carries its evidence
-                # images. run_batch omits it and the rows go in bare; an
-                # operator acting on a plate needs the crop to check it by
-                # eye, which is the whole argument for storing them.
-                stored = reg.write(cid, v['plate_list'], cam.get('lat'),
-                                   cam.get('lng'), started_at=started,
-                                   out_dir=os.environ.get('SENTINEL_OUT', 'output'))
-                print(f'[live {stamp}] {cid}: {v["total_tracked"]} vehicles, '
-                      f'{v["plates_read"]} plates, {stored} stored, '
-                      f'{time.time() - t0:.0f}s', flush=True)
-            except Exception as e:                       # noqa: BLE001
-                print(f'[live {stamp}] {cid}: analysis failed — {e}', flush=True)
+                try:
+                    started = datetime.now(timezone.utc)
+                    result = analyse(dest, cid, profile=profile)
+                    v = result['vehicles']
+                    # out_dir is passed so each sighting carries its evidence
+                    # images. run_batch omits it and the rows go in bare; an
+                    # operator acting on a plate needs the crop to check it by
+                    # eye, which is the whole argument for storing them.
+                    stored = reg.write(
+                        cid, v['plate_list'], cam.get('lat'), cam.get('lng'),
+                        started_at=started,
+                        out_dir=os.environ.get('SENTINEL_OUT', 'output'))
+                    print(f'[live {stamp}] {cid}: {v["total_tracked"]} vehicles, '
+                          f'{v["plates_read"]} plates, {stored} stored, '
+                          f'{time.time() - t0:.0f}s', flush=True)
+                except Exception as e:                   # noqa: BLE001
+                    print(f'[live {stamp}] {cid}: analysis failed — {e}',
+                          flush=True)
+
+                if kinds:
+                    try:
+                        started = datetime.now(timezone.utc)
+                        res = ev_mod.analyse_events(dest, cid, kinds,
+                                                    args.event_device)
+                        if res.get('error'):
+                            print(f'[live {stamp}] {cid}: events — '
+                                  f'{res["error"]}', flush=True)
+                        else:
+                            n = ev_reg.write(res, cam.get('lat'),
+                                             cam.get('lng'),
+                                             started_at=started)
+                            fired = [k for k, f in res['findings'].items()
+                                     if f['fired']]
+                            # Printed whether or not anything fired: a run of
+                            # "nothing" with the scores beside it is how a
+                            # threshold gets tuned to a camera.
+                            detail = '; '.join(
+                                f'{k} {f["note"]}'
+                                for k, f in res['findings'].items())
+                            print(f'[live {stamp}] {cid}: events -> '
+                                  f'{", ".join(fired) if fired else "nothing"}'
+                                  f' ({n} stored) | {detail}', flush=True)
+                    except Exception as e:               # noqa: BLE001
+                        print(f'[live {stamp}] {cid}: events failed — {e}',
+                              flush=True)
             finally:
                 last_seen[cid] = time.time()
                 try:

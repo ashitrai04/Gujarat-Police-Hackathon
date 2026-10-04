@@ -948,7 +948,8 @@ while true; do
   echo "[guard $(date -Is)] starting the ANPR worker" >> "$LOG"
   cd "$PIPELINE_DIR"
   "$PY" -u live_worker.py --seconds "${ANPR_SECONDS:-30}" \
-      --source "${ANPR_SOURCE:-hls}" >> "$LOG" 2>&1 &
+      --source "${ANPR_SOURCE:-hls}" \
+      --events "${ANPR_EVENTS:-}" >> "$LOG" 2>&1 &
   child=$!
   echo "$child" > "$SENTINEL_HOME/anpr.pid"
   wait "$child" || true
@@ -1110,6 +1111,87 @@ def ffmpeg_check(cam='cam08'):
     return True
 
 
+def events_test(recording=None, camera='cam08', device=None,
+                store_all=True):
+    """Score a recording for crowd, fire and accident, and print the numbers.
+
+    Run this before turning the kinds on in the live worker. Two of the three
+    are zero-shot screeners rather than trained detectors, so their thresholds
+    are guesses until they have been seen against real footage from these
+    cameras -- and the margins printed here are exactly what a threshold
+    should be set from.
+
+    store_all is on by default so the findings land in `events` even when
+    nothing crossed its threshold. A row that did not fire is what makes the
+    threshold adjustable later against footage already scored, rather than
+    only against whatever happens to come past next.
+    """
+    if not os.path.isfile(f'{PIPELINE}/events.py'):
+        print('!! events.py missing -- git pull in the repo first')
+        return False
+
+    vids = sorted(f for f in os.listdir(FOOTAGE)
+                  if f.lower().endswith('.mp4')) if os.path.isdir(FOOTAGE) else []
+    if recording is None:
+        if not vids:
+            print(f'!! no .mp4 in {FOOTAGE}')
+            print('   Upload one, or run collect_footage() if the upload '
+                  'landed elsewhere.')
+            return False
+        recording = vids[0]
+        if len(vids) > 1:
+            print(f'  {len(vids)} recordings here; using {recording}')
+    path = recording if os.path.isabs(recording) else f'{FOOTAGE}/{recording}'
+    if not os.path.isfile(path):
+        print(f'!! not a file: {path}')
+        return False
+
+    flags = f' --device {device}' if device else ''
+    if store_all:
+        flags += ' --store-all'
+    print(f'=== crowd / fire / accident over {os.path.basename(path)}, '
+          f'filed as {camera} ===')
+    sh(f'source {HOME}/env.sh && cd {PIPELINE} && '
+       f'{PY} events.py "{path}" --camera {camera}{flags}')
+    print()
+    print('  crowd is a count, and can be read as one.')
+    print('  fire and accident are margins between a positive and a negative')
+    print('  prompt set -- a similarity, not a probability. Compare the number')
+    print('  on footage that does contain the event against footage that does')
+    print('  not, and put the threshold between them. Clips with no incident')
+    print('  in them are the more useful half of that comparison.')
+    return True
+
+
+def events_thresholds(fire=None, accident=None, crowd_medium=None,
+                      crowd_high=None):
+    """Set the event thresholds the worker will use.
+
+    Written to env.sh so the running worker picks them up on its next restart
+    and they survive a reboot. The defaults in events.py are deliberately
+    conservative; these cameras are the only thing that can say what the right
+    numbers are.
+    """
+    pairs = [('SENTINEL_FIRE_THRESHOLD', fire),
+             ('SENTINEL_ACCIDENT_THRESHOLD', accident),
+             ('SENTINEL_CROWD_MEDIUM', crowd_medium),
+             ('SENTINEL_CROWD_HIGH', crowd_high)]
+    set_any = [(k, v) for k, v in pairs if v is not None]
+    if not set_any:
+        print('  nothing given. Current values:')
+        sh(f'grep -E "SENTINEL_(FIRE|ACCIDENT|CROWD)" {HOME}/env.sh '
+           f'|| echo "  (none set; events.py defaults apply)"')
+        return False
+    with open(f'{HOME}/env.sh', 'a') as f:
+        for k, v in set_any:
+            f.write(f'export {k}="{v}"\n')
+    for k, v in set_any:
+        print(f'  {k} = {v}')
+    print('  Restart the worker for these to take effect: anpr_stop() then '
+          'anpr_start(events=...)')
+    return True
+
+
 def anpr_setup():
     """Install what the plate pipeline imports.
 
@@ -1151,7 +1233,7 @@ def anpr_setup():
     return True
 
 
-def anpr_start(seconds=30, source='hls'):
+def anpr_start(seconds=30, source='hls', events=''):
     """Read plates off every camera in the registry, continuously.
 
     This is what makes "has this vehicle been past that camera?" answerable. A
@@ -1159,6 +1241,13 @@ def anpr_start(seconds=30, source='hls'):
     so the new camera joins the rotation without anyone restarting anything,
     and from then on its sightings accumulate in `detections` where the trace
     and the event search already look.
+
+    `events` adds scene analysis to the same pass, as a comma list of
+    crowd, fire and accident -- anpr_start(events='crowd,fire,accident'). It
+    shares the clip the plate pass already captured rather than running a
+    second worker, because the grid allows one session per address and a
+    second sign-in would invalidate this one's. Left empty, nothing about the
+    existing behaviour changes.
 
     Detached and watchdogged for the same reasons the search service is: the
     card is shared, and a worker that a colleague's job can quietly end is not
@@ -1190,6 +1279,7 @@ def anpr_start(seconds=30, source='hls'):
     with open(f'{HOME}/env.sh', 'a') as f:
         f.write(f'export ANPR_SECONDS="{seconds}"\n')
         f.write(f'export ANPR_SOURCE="{source}"\n')
+        f.write(f'export ANPR_EVENTS="{events}"\n')
         f.write(f'export SENTINEL_OUT="{HOME}/anpr-out"\n')
         f.write(f'export SENTINEL_TMP="{HOME}/anpr-tmp"\n')
     os.makedirs(f'{HOME}/anpr-out', exist_ok=True)
@@ -1243,6 +1333,8 @@ def anpr_start(seconds=30, source='hls'):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True)
 
+    if events:
+        print(f'==> scene analysis on: {events}')
     print('==> ANPR worker starting; first camera takes a minute (models load)')
     time.sleep(6)
     return anpr_status()
@@ -1546,6 +1638,9 @@ print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop
 print('diag :  capture_check(cam)  -- why one capture produced no video')
 print('        anpr_test()         -- plate accuracy on a recording')
 print('        ffmpeg_check()      -- which ffmpeg capability is broken')
+print('scene:  events_test()       -- crowd / fire / accident on a recording')
+print('        events_thresholds() -- set them from what you measured')
+print('        anpr_start(events=\'crowd,fire,accident\')  -- run them live')
 print('share:  tunnel()   — put it on a public URL for the web app')
 print('check:  doctor()   — what is broken and what to run next')
 print('        models()   — which models are on this machine')
