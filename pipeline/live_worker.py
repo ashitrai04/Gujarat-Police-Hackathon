@@ -41,6 +41,15 @@ The two are wrapped separately. A missing image/text model should cost the
 events and not the plates, and a plate pass that throws should not discard
 scene findings from a clip that has already been paid for.
 
+Crowd counts are written on every pass, not only when they are high, for the
+same reason plate sightings are written whether or not the plate is on a
+watchlist: the series is what can be asked questions of later. "Eighty people
+at 19:40" means nothing without "six people at 15:00" from the same camera to
+compare it against. Fire and accident are screeners and will mostly report
+nothing on a live estate, which is the expected result rather than a fault;
+their rows are kept when they fire or come close, so the thresholds have
+something to be tuned against.
+
 ORDERING
 --------
 Cameras are visited in order of how long it has been since each was last read,
@@ -97,6 +106,11 @@ def main() -> None:
                          'list of crowd,fire,accident (default: none)')
     ap.add_argument('--event-device', default=None, choices=['gpu', 'cpu'],
                     help='override; the default follows free VRAM')
+    ap.add_argument('--event-store', default='measure',
+                    choices=['measure', 'fired', 'all'],
+                    help="what to record: 'measure' keeps every crowd count "
+                         "plus near-miss screeners (default), 'fired' only "
+                         "threshold crossings, 'all' everything")
     args = ap.parse_args()
 
     signal.signal(signal.SIGINT, _handle)
@@ -221,7 +235,8 @@ def main() -> None:
                         else:
                             n = ev_reg.write(res, cam.get('lat'),
                                              cam.get('lng'),
-                                             started_at=started)
+                                             started_at=started,
+                                             store=args.event_store)
                             fired = [k for k, f in res['findings'].items()
                                      if f['fired']]
                             # Printed whether or not anything fired: a run of

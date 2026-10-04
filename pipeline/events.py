@@ -137,6 +137,30 @@ PROMPTS['accident']['min_hits'] = int(_env_float(
 CROWD_MEDIUM = int(_env_float('SENTINEL_CROWD_MEDIUM', 25))
 CROWD_HIGH = int(_env_float('SENTINEL_CROWD_HIGH', 60))
 
+# Kinds that are stored on every pass whether or not they crossed a threshold.
+#
+# Crowd is a measurement, and the useful thing about a measurement is the
+# series, not the exceedance. "Eighty people at 19:40" only means something
+# beside "six people at 15:00" from the same camera, and a table that records
+# only the exceedances cannot answer when it started building or whether this
+# is normal for a Friday. Plate detections are stored the same way: every
+# sighting, not only the ones on a watchlist.
+ALWAYS_STORE = ('crowd',)
+
+# How close to its threshold a screener has to get to be worth a row. A fire
+# that never happens produces a long run of comfortably negative margins, and
+# storing all of them is noise; storing the ones that came close is how the
+# threshold gets evidence to be tuned against.
+NEAR_MISS = _env_float('SENTINEL_EVENT_NEAR_MISS', 0.02)
+
+# Rows are cheap and images are not. A row is a couple of hundred bytes; a
+# JPEG is tens of kilobytes, and thirty cameras on a few-minute cycle would
+# put thousands of them a day into a storage bucket with a free-tier limit.
+# So every stored finding gets a row and only some get a picture: anything
+# that fired always does, and an ordinary pass does at most once per camera
+# per kind in this interval, which keeps a visual record without the volume.
+SNAP_EVERY_S = _env_float('SENTINEL_EVENT_SNAP_EVERY', 900)
+
 
 def device_plan() -> tuple[str, dict]:
     """'gpu' or 'cpu', and the sampling plan for it.
@@ -338,6 +362,40 @@ def analyse_events(video: str, camera_id: str,
     return result
 
 
+def ensure_local(video: str, seconds: int = 30, tmp: str | None = None) -> str:
+    """A local file for `video`, capturing it first if it is a live camera.
+
+    OpenCV can open an HLS URL, but it cannot sign in: the grid requires a
+    session cookie and refuses an anonymous request, so handing the URL
+    straight to VideoCapture decodes nothing and reports an empty clip rather
+    than an authentication failure. The capture path in run_batch already
+    holds the credentials and the ffmpeg-segfault fallback, so live footage is
+    fetched the same way the plate worker fetches it.
+
+    Returns the local path, which is the input unchanged when it was already
+    a file. Raises RuntimeError if a live capture produced nothing, because
+    the caller cannot tell an empty clip from an absent one.
+    """
+    if not video.startswith(('http://', 'https://', 'rtsp://')):
+        return video
+
+    sys.path.insert(0, PIPELINE_DIR)
+    from run_batch import capture, grid_session
+
+    host = 'https://' + video.split('/')[2] if video.startswith('http') else ''
+    session = grid_session(host) if host else None
+    tmp = tmp or os.environ.get('SENTINEL_TMP', '/tmp')
+    os.makedirs(tmp, exist_ok=True)
+    # Named for the camera segment of the URL so two cameras cannot collide.
+    tag = video.rstrip('/').split('/')[-2] if '/' in video else 'live'
+    dest = os.path.join(tmp, f'events-{tag}.mp4')
+
+    print(f'[events] capturing {seconds}s from {video}')
+    if not capture(video, seconds, dest, session):
+        raise RuntimeError(f'no footage captured from {video}')
+    return dest
+
+
 class EventRegistry:
     """Writes scene events, in the same shape as the detections writer.
 
@@ -360,6 +418,11 @@ class EventRegistry:
         else:
             print('[events] SUPABASE_URL / SUPABASE_SERVICE_KEY unset - '
                   'events will be printed, not stored')
+        # When each (camera, kind) last had a picture taken. Held in memory
+        # rather than on disk: the worker is long-running, and the cost of the
+        # watchdog restarting it is one extra snapshot, which is not worth a
+        # file to avoid.
+        self._last_snap: dict[tuple, float] = {}
 
     def _snapshot(self, camera_id: str, kind: str, frame) -> str | None:
         """Put the frame that triggered the event in the evidence bucket.
@@ -385,20 +448,58 @@ class EventRegistry:
             print(f'    snapshot upload failed: {str(exc)[:80]}')
             return None
 
+    def _keep(self, kind: str, f: dict, store: str) -> bool:
+        """Whether this finding earns a row under the given policy."""
+        if store == 'all' or f['fired']:
+            return True
+        if store == 'fired':
+            return False
+        # 'measure': the series is the point for a measurement, and a screener
+        # is worth recording when it came close enough to inform a threshold.
+        if kind in ALWAYS_STORE:
+            return True
+        score, spec = f.get('score'), PROMPTS.get(kind)
+        if score is None or not spec:
+            return False
+        return score >= spec['threshold'] - NEAR_MISS
+
+    def _snap_due(self, cam: str, kind: str, fired: bool, now: float) -> bool:
+        """Whether to spend a stored image on this one.
+
+        Anything that fired is evidence and always gets one. An ordinary pass
+        gets one at most once per interval, so there is a visual record of a
+        normal street without a picture for every pass of every camera.
+        """
+        if fired:
+            return True
+        last = self._last_snap.get((cam, kind), 0.0)
+        return (now - last) >= SNAP_EVERY_S
+
     def write(self, result: dict, lat=None, lng=None,
-              started_at: datetime | None = None, only_fired=True) -> int:
-        """Store the findings. Returns how many rows were written."""
+              started_at: datetime | None = None, store='measure') -> int:
+        """Store the findings. Returns how many rows were written.
+
+        store='measure' (the default) keeps every crowd count, because a count
+        is only meaningful as a series, plus any screener that fired or came
+        within NEAR_MISS of firing. 'fired' keeps only what crossed a
+        threshold; 'all' keeps everything, which is what the calibration test
+        wants and a continuous worker does not.
+        """
+        import time as _time
+
         base = started_at or datetime.now(timezone.utc)
+        now = _time.time()
         cam = result['camera_id']
         frames = result.get('frames') or []
         rows = []
 
         for kind, f in result.get('findings', {}).items():
-            if only_fired and not f['fired']:
+            if not self._keep(kind, f, store):
                 continue
             frame = None
             fi = f.get('frame_index')
-            if frames and fi is not None and fi < len(frames):
+            if (frames and fi is not None and fi < len(frames)
+                    and self._snap_due(cam, kind, f['fired'], now)):
                 frame = frames[fi][1]
             row = {
                 'camera_id': cam,
@@ -419,7 +520,13 @@ class EventRegistry:
             if lat is not None and lng is not None:
                 row['geom'] = f'SRID=4326;POINT({lng} {lat})'
             if frame is not None:
-                row['snapshot_url'] = self._snapshot(cam, kind, frame)
+                url = self._snapshot(cam, kind, frame)
+                row['snapshot_url'] = url
+                # Only count it as spent when one was actually stored, so a
+                # failed upload is retried on the next pass rather than
+                # starting the interval over with nothing to show.
+                if url:
+                    self._last_snap[(cam, kind)] = now
             rows.append(row)
 
         if not rows:
@@ -445,18 +552,40 @@ def main() -> None:
     ap.add_argument('video', help='file path, HLS URL, or rtsp:// URL')
     ap.add_argument('--camera', required=True, help='registry camera id')
     ap.add_argument('--kinds', default='crowd,fire,accident')
+    ap.add_argument('--seconds', type=int, default=30,
+                    help='how much footage to take, when given a live camera')
     ap.add_argument('--device', default=None, choices=['gpu', 'cpu'],
                     help='override; the default follows free VRAM')
     ap.add_argument('--lat', type=float, default=None)
     ap.add_argument('--lng', type=float, default=None)
+    ap.add_argument('--store', default='measure',
+                    choices=['measure', 'fired', 'all'],
+                    help="what to record: 'measure' keeps every crowd count "
+                         "plus near-miss screeners (default), 'fired' only "
+                         "what crossed a threshold, 'all' everything")
     ap.add_argument('--store-all', action='store_true',
-                    help='store every finding, not only the ones that fired')
+                    help="shorthand for --store all; what calibration wants")
     ap.add_argument('--json', action='store_true',
                     help='print the findings as JSON (frames omitted)')
     args = ap.parse_args()
 
     kinds = tuple(k.strip() for k in args.kinds.split(',') if k.strip())
-    result = analyse_events(args.video, args.camera, kinds, args.device)
+
+    # A live camera is captured first; a file is used as given. Cleaned up
+    # afterwards only when it was captured here, so a recording passed in by
+    # hand is never deleted.
+    try:
+        local = ensure_local(args.video, args.seconds)
+    except RuntimeError as e:
+        print(f'[events] {args.camera}: {e}')
+        raise SystemExit(1)
+    captured = local != args.video
+
+    try:
+        result = analyse_events(local, args.camera, kinds, args.device)
+    finally:
+        if captured and os.path.exists(local):
+            os.remove(local)
 
     if result.get('error'):
         print(f"[events] {args.camera}: {result['error']}")
@@ -468,8 +597,9 @@ def main() -> None:
         mark = 'FIRED' if f['fired'] else '  -  '
         print(f"  {mark} {kind:9s} {f['method']:9s} {f['note']}")
 
-    written = EventRegistry().write(result, args.lat, args.lng,
-                                    only_fired=not args.store_all)
+    written = EventRegistry().write(
+        result, args.lat, args.lng,
+        store='all' if args.store_all else args.store)
     print(f'[events] {written} events recorded')
 
     if args.json:

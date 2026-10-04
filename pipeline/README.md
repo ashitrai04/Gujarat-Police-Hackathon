@@ -62,10 +62,46 @@ worker because it answers a different question, but in the live worker the two
 share one captured clip — see below.
 
 ```bash
-python events.py clip.mp4 --camera cam08                     # all three
+python events.py clip.mp4 --camera cam08                      # a recording
+python events.py https://cctv.corp8.cloud/cam08/index.m3u8 \
+    --camera cam08 --seconds 30                               # a live camera
 python events.py clip.mp4 --camera cam08 --kinds crowd        # just one
 python events.py clip.mp4 --camera cam08 --device cpu --store-all
 ```
+
+Given a URL it signs in to the grid and captures first. OpenCV can open an
+HLS URL but cannot authenticate, so handing the URL straight to the decoder
+yields an empty clip and reports it as "no frames" rather than as a refused
+request — the capture path in `run_batch` already holds the credentials and the
+ffmpeg fallback, so live footage is fetched the way the plate worker fetches
+it.
+
+### What gets stored, and what gets a picture
+
+`--store measure` is the default and the one the live worker runs.
+
+- **Every crowd count is stored, on every pass**, whether or not it is high —
+  the same way every plate sighting is stored whether or not it is on a
+  watchlist. A count is only meaningful as a series: "eighty people at 19:40"
+  says nothing without "six people at 15:00" from the same camera, and a table
+  holding only the exceedances cannot say when it started building or whether
+  this is normal for a Friday.
+- **Fire and accident are stored when they fire or come within
+  `SENTINEL_EVENT_NEAR_MISS` (default 0.02) of it.** On a live estate the
+  normal result is nothing, which is expected rather than a fault. Keeping the
+  near misses is what gives a threshold evidence to be tuned against; keeping
+  every comfortably-negative margin would just be noise.
+- `--store fired` keeps only threshold crossings; `--store all` keeps
+  everything and is what calibration wants.
+
+Rows are cheap and images are not — a row is a couple of hundred bytes, a JPEG
+tens of kilobytes, and thirty cameras on a few-minute cycle would put thousands
+a day into a bucket with a free-tier limit. So **every stored finding gets a
+row, and only some get a picture**: anything that fired always does, and an
+ordinary pass does at most once per camera per kind per
+`SENTINEL_EVENT_SNAP_EVERY` seconds (default 900). A failed upload does not
+consume the interval, so it is retried on the next pass rather than leaving a
+gap with nothing to show.
 
 **The three are not equally trustworthy, and the schema records which is
 which.**
@@ -122,7 +158,10 @@ search already download.
 
 `live_worker.py --events crowd,fire,accident` adds scene analysis to the
 continuous pass, and the server bootstrap exposes it as
-`anpr_start(events='crowd,fire,accident')`. It shares the clip the plate pass
+`anpr_start(events='crowd,fire,accident')`. `events_live()` there runs all
+three against one live camera immediately, which is how to confirm the whole
+chain — sign-in, capture, decode, both models, the write — works on the live
+estate without waiting for the worker to come round. It shares the clip the plate pass
 already captured rather than running as a second worker, for three reasons: the
 grid allows one session per address, so a second sign-in would invalidate the
 first one's cookie; capturing each camera twice doubles the bandwidth for no

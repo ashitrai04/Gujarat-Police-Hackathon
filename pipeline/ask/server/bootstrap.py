@@ -949,7 +949,8 @@ while true; do
   cd "$PIPELINE_DIR"
   "$PY" -u live_worker.py --seconds "${ANPR_SECONDS:-30}" \
       --source "${ANPR_SOURCE:-hls}" \
-      --events "${ANPR_EVENTS:-}" >> "$LOG" 2>&1 &
+      --events "${ANPR_EVENTS:-}" \
+      --event-store "${ANPR_EVENT_STORE:-measure}" >> "$LOG" 2>&1 &
   child=$!
   echo "$child" > "$SENTINEL_HOME/anpr.pid"
   wait "$child" || true
@@ -1192,6 +1193,49 @@ def events_thresholds(fire=None, accident=None, crowd_medium=None,
     return True
 
 
+def events_live(cam='cam08', seconds=30, device=None, store='all'):
+    """Run crowd, fire and accident against a live camera, once, right now.
+
+    The difference from events_test() is the footage: this signs in to the
+    grid, captures from the camera, and scores what is on it at this moment.
+    It is the check that the whole chain works on the live estate rather than
+    on a recording -- authentication, capture, decode, both models, and the
+    write -- without waiting for the continuous worker to come round.
+
+    store='all' by default so a quiet street still produces rows. On a live
+    camera the normal result for fire and accident is nothing, and a run that
+    stores nothing cannot be told apart from a run that failed.
+    """
+    if not os.path.isfile(f'{PIPELINE}/events.py'):
+        print('!! events.py missing -- git pull in the repo first')
+        return False
+
+    missing = anpr_missing()
+    if missing:
+        print('!! cannot import: ' + ', '.join(m for m, _, _ in missing))
+        print('   Run anpr_setup() first.')
+        return False
+    if not _cred('SUPABASE_SERVICE_KEY'):
+        print('  no service key in creds.sh -- findings will be printed, '
+              'not stored')
+
+    url = f'https://cctv.corp8.cloud/{cam}/index.m3u8'
+    flags = f' --device {device}' if device else ''
+    print(f'=== live scene analysis: {cam}, {seconds}s ===')
+    if _anpr_running():
+        print('  note: the ANPR worker is running and holds a grid session.')
+        print('  The grid allows one per address, so this sign-in may take it')
+        print('  from the worker for a pass. anpr_stop() first to be certain.')
+    sh(f'source {HOME}/env.sh && cd {PIPELINE} && '
+       f'{PY} events.py "{url}" --camera {cam} --seconds {seconds}'
+       f'{flags} --store {store}')
+    print()
+    print('  crowd reports a count. fire and accident reporting nothing is')
+    print('  the expected result on an ordinary street -- what this proves is')
+    print('  that the chain runs on live footage and the rows are written.')
+    return True
+
+
 def anpr_setup():
     """Install what the plate pipeline imports.
 
@@ -1233,7 +1277,8 @@ def anpr_setup():
     return True
 
 
-def anpr_start(seconds=30, source='hls', events=''):
+def anpr_start(seconds=30, source='hls', events='',
+               event_store='measure'):
     """Read plates off every camera in the registry, continuously.
 
     This is what makes "has this vehicle been past that camera?" answerable. A
@@ -1248,6 +1293,14 @@ def anpr_start(seconds=30, source='hls', events=''):
     second worker, because the grid allows one session per address and a
     second sign-in would invalidate this one's. Left empty, nothing about the
     existing behaviour changes.
+
+    Crowd counts are stored on every pass by default, the way plate sightings
+    are, because a count is only meaningful as a series. Fire and accident
+    will mostly report nothing on a live estate -- that is the expected
+    result, not a fault -- so their rows are kept when they fire or come
+    close, which is what gives the thresholds something to be tuned against.
+    event_store='all' keeps everything; 'fired' keeps only threshold
+    crossings.
 
     Detached and watchdogged for the same reasons the search service is: the
     card is shared, and a worker that a colleague's job can quietly end is not
@@ -1280,6 +1333,7 @@ def anpr_start(seconds=30, source='hls', events=''):
         f.write(f'export ANPR_SECONDS="{seconds}"\n')
         f.write(f'export ANPR_SOURCE="{source}"\n')
         f.write(f'export ANPR_EVENTS="{events}"\n')
+        f.write(f'export ANPR_EVENT_STORE="{event_store}"\n')
         f.write(f'export SENTINEL_OUT="{HOME}/anpr-out"\n')
         f.write(f'export SENTINEL_TMP="{HOME}/anpr-tmp"\n')
     os.makedirs(f'{HOME}/anpr-out', exist_ok=True)
@@ -1334,7 +1388,7 @@ def anpr_start(seconds=30, source='hls', events=''):
         start_new_session=True)
 
     if events:
-        print(f'==> scene analysis on: {events}')
+        print(f'==> scene analysis on: {events} (storing: {event_store})')
     print('==> ANPR worker starting; first camera takes a minute (models load)')
     time.sleep(6)
     return anpr_status()
@@ -1638,7 +1692,8 @@ print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop
 print('diag :  capture_check(cam)  -- why one capture produced no video')
 print('        anpr_test()         -- plate accuracy on a recording')
 print('        ffmpeg_check()      -- which ffmpeg capability is broken')
-print('scene:  events_test()       -- crowd / fire / accident on a recording')
+print('scene:  events_live()       -- all three on a LIVE camera, now')
+print('        events_test()       -- the same on a recording')
 print('        events_thresholds() -- set them from what you measured')
 print('        anpr_start(events=\'crowd,fire,accident\')  -- run them live')
 print('share:  tunnel()   — put it on a public URL for the web app')
