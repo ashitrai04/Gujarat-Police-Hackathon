@@ -24,6 +24,7 @@ import {
   ackAlert, addWatchlist, listAlerts, listDetections, listWatchlist,
   plateRoute, removeWatchlist, searchPlates, subscribeAlerts, toggleWatchlist,
 } from './detections';
+import { crowdSeries, listSceneEvents, type SceneEvent, type SceneQuery } from './scene';
 import { DB_READY } from './db';
 
 /**
@@ -152,6 +153,13 @@ export const api = {
      query per endpoint and given the deployment another process to keep
      alive, while losing row-level security on analytics data. ── */
   detections: (q: DetectionQuery = {}): Promise<Detection[]> => listDetections(q),
+
+  /* Scene events are a separate read from detections, because `method`
+     distinguishes a crowd count (measured) from a fire or accident score
+     (screened). See api/scene.ts. */
+  sceneEvents: (q: SceneQuery = {}): Promise<SceneEvent[]> => listSceneEvents(q),
+
+  crowdSeries: (cameraId: string, hours?: number) => crowdSeries(cameraId, hours),
 
   route: async (plate: string): Promise<Route> => {
     // Camera geography lives in the registry, sightings in `detections`.

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Boxes, ChevronLeft, ChevronRight, Maximize2, Radio, ScanLine, ScanSearch, X,
+  Boxes, ChevronLeft, ChevronRight, Maximize2, Radio, ScanLine, ScanSearch, Users, X,
 } from 'lucide-react';
 import { Pill } from '@/components/ui';
 import { CameraPlayer } from '@/components/CameraPlayer';
@@ -11,6 +11,7 @@ import { ARCHIVE_DATE, fallbackUrl } from '@/api/fallback';
 import type { Camera, Detection } from '@/api/types';
 import { DetectionCanvas } from '@/features/live/DetectionCanvas';
 import { useLiveDetector, type LiveDetector } from '@/features/live/useLiveDetector';
+import { SceneView } from './SceneView';
 
 /**
  * The camera preview, with the detector's output available beside the feed.
@@ -38,7 +39,7 @@ export function DetectionView({
   camera: Camera;
   detections: Detection[] | undefined;
 }) {
-  const [mode, setMode] = useState<'live' | 'detections'>('live');
+  const [mode, setMode] = useState<'live' | 'detections' | 'scene'>('live');
   const [detect, setDetect] = useState(true);
   const [source, setSource] = useState<'live' | 'archive'>('live');
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
@@ -96,9 +97,17 @@ export function DetectionView({
         >
           Detections{plotted.length ? ` (${plotted.length})` : ''}
         </Tab>
+        {/* Not gated on there being events: an empty Scene tab is the honest
+            answer to "is the crowd model running on this camera?", whereas a
+            hidden tab looks like the feature does not exist. */}
+        <Tab active={mode === 'scene'} onClick={() => setMode('scene')} icon={Users}>
+          Scene
+        </Tab>
       </div>
 
-      {mode === 'live' ? (
+      {mode === 'scene' ? (
+        <SceneView cameraId={camera.id} />
+      ) : mode === 'live' ? (
         <CameraPlayer
           key={source}
           camera={camera}
