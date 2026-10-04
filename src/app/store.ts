@@ -294,7 +294,13 @@ export const useStore = create<State>()(
   pinMenu: null,
   setPinMenu: (pinMenu) => set({ pinMenu }),
   dockH: 300,
-  setDockH: (dockH) => set({ dockH: Math.max(150, Math.min(900, dockH)) }),
+  // Guarded against a non-finite value rather than only clamped. Math.min and
+  // Math.max both pass NaN straight through, so a bad computation upstream
+  // reached the DOM as height: "NaNpx" — ignored by the browser, so the dock
+  // grew to its content — and then persisted, since JSON.stringify turns NaN
+  // into null and the next load was broken before anything was clicked.
+  setDockH: (dockH) =>
+    set(Number.isFinite(dockH) ? { dockH: Math.max(150, Math.min(900, dockH)) } : {}),
   wallFullscreen: false,
   toggleWallFullscreen: () => set((s) => ({ wallFullscreen: !s.wallFullscreen })),
 

@@ -130,7 +130,14 @@ export function VideoWall() {
   useEffect(() => {
     if (!dockOpen || wallFullscreen) return;   // fullscreen uses the viewport
     const l = LAYOUTS.find((x) => x.n === wallLayout);
-    if (!l) return;
+    // Auto carries cols: 0, rows: 0 — it shapes its grid to whatever box it is
+    // given, so there is no tile size to derive a height from. Computing one
+    // anyway divided by zero: tileW became Infinity, rows * Infinity was NaN,
+    // and the dock got height: "NaNpx", which the browser discards, leaving it
+    // to grow to its content and swallow the map. It showed up on any action
+    // that re-ran this effect — clicking Detail on a tile exits fullscreen,
+    // which is exactly that. The dock keeps whatever height it has instead.
+    if (!l || l.n === 0 || l.cols < 1 || l.rows < 1) return;
     const railW = document.querySelector('aside')?.getBoundingClientRect().width ?? 264;
     const usableW = window.innerWidth - railW - PAD;
     const tileW = (usableW - (l.cols - 1) * GAP) / l.cols;
@@ -184,7 +191,10 @@ export function VideoWall() {
               background: 'var(--surface)',
             }
           : {
-              height: `${dockH}px`,
+              // Defended at the point of use as well: a dockH persisted from
+              // before the fix comes back as null, and "nullpx" is dropped by
+              // the browser exactly as "NaNpx" was.
+              height: `${Number.isFinite(dockH) ? dockH : 300}px`,
               background: 'var(--surface)',
               borderTop: '1px solid var(--line)',
             }
