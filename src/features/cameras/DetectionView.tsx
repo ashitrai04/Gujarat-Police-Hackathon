@@ -377,6 +377,7 @@ function LiveStatus({
   const e = live.engine;
   const vehicles = live.result?.tracks.length ?? 0;
   const plates = live.result?.tracks.filter((t) => t.plate?.text).length ?? 0;
+  const people = live.result?.people.length ?? 0;
   const mb = (n: number) => (n / 1048576).toFixed(0);
 
   let line: string;
@@ -393,7 +394,10 @@ function LiveStatus({
   else if (!live.result) line = 'Waiting for picture…';
   else {
     line = `${e.status === 'ready' && e.backend === 'webgpu' ? 'GPU' : 'CPU'} · ${live.fps.toFixed(1)} fps · `
-      + `${vehicles} vehicle${vehicles === 1 ? '' : 's'} · ${plates} plate${plates === 1 ? '' : 's'} read`;
+      + `${vehicles} vehicle${vehicles === 1 ? '' : 's'} · ${plates} plate${plates === 1 ? '' : 's'} read`
+      // Shown only when there are any. A permanent "0 people" on a motorway
+      // camera is noise in a line an operator reads at a glance.
+      + (people ? ` · ${people} ${people === 1 ? 'person' : 'people'}` : '');
     tone = 'var(--text-dim)';
   }
 

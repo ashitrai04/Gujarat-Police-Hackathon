@@ -7,6 +7,9 @@ const CLASS_COLOUR: Record<VehicleClass, string> = {
   bus: '#E879F9',
   truck: '#FB923C',
 };
+/* People get their own colour, outside the vehicle palette, so a glance at the
+ * picture separates "traffic" from "crowd" without reading any label. */
+const PERSON = '#60A5FA';
 const WATCH = '#F87171';
 const SETTLING = '#FBBF24';
 const STABLE = '#2DD4BF';
@@ -57,6 +60,23 @@ export function DetectionCanvas({
       const X = (x: number) => ox + x * s;
       const Y = (y: number) => oy + y * s;
       const small = cw < 520;
+
+      // People first, so a vehicle box and its plate sit on top where the two
+      // overlap — the plate is the thing being read, and it must not end up
+      // underneath a pedestrian's outline.
+      for (const p of result.people) {
+        const x1 = X(p.box[0]), y1 = Y(p.box[1]), x2 = X(p.box[2]), y2 = Y(p.box[3]);
+        g.lineWidth = 1.5;
+        g.strokeStyle = PERSON;
+        g.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      }
+      // One count for the frame rather than a label on each box: thirty
+      // "person 71%" chips at a busy junction cover the picture they are
+      // describing, and the number is what is actually being read.
+      if (result.people.length) {
+        chip(g, `${result.people.length} ${result.people.length === 1 ? 'person' : 'people'}`,
+          8, ch - 8, PERSON, '#06203F', small ? 10 : 11.5, cw, 'above');
+      }
 
       for (const t of result.tracks) {
         const hit = t.plate?.stable && t.plate.text ? watch.get(t.plate.text) : undefined;

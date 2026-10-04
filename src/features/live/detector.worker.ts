@@ -33,8 +33,23 @@ const MODELS = {
   ocr: 'models/ocr-cct-xs-v2.onnx',
 };
 
-/** COCO classes worth a plate. Pedestrians and animals are not traffic. */
+/** COCO classes worth a plate. Animals are not traffic; people are counted
+ *  separately below, since they have no plate to look for. */
 const VEHICLE: Record<number, VehicleClass> = { 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck' };
+/*
+ * People come out of the same forward pass. The model is the full 80-class
+ * COCO export -- person is class 0 and was already being decoded and thrown
+ * away, so counting them costs nothing beyond the box filtering below.
+ *
+ * The threshold is higher than the vehicle one. A missed pedestrian changes a
+ * crowd count by one and nobody acts on it; a false one at a busy junction
+ * inflates every count from that camera, and the count is the whole reading.
+ */
+const PERSON_CLASS = 0;
+const PERSON_CONF = 0.45;
+/** Boxes smaller than this are too few pixels to be a person rather than
+ *  noise on a wet road at night, which is most of this estate's footage. */
+const MIN_PERSON_H = 18;
 /** The batch pipeline's own threshold (CONFIG det_conf), so both agree on what counts. */
 const VEHICLE_CONF = 0.35;
 const PLATE_CONF = 0.3;
@@ -301,17 +316,23 @@ async function analyse(bitmap: ImageBitmap): Promise<FrameResult> {
   const vOut = (await s.vehicle.run({ [s.vehicle.inputNames[0]]: lb.tensor }))[s.vehicle.outputNames[0]];
   const v = vOut.data as Float32Array; // 300 × [x1 y1 x2 y2 score cls]
   const dets: { box: Box; cls: VehicleClass; score: number }[] = [];
+  const people: { box: Box; score: number }[] = [];
   for (let i = 0; i < v.length; i += 6) {
     const score = v[i + 4];
-    const cls = VEHICLE[Math.round(v[i + 5])];
+    const raw = Math.round(v[i + 5]);
+    const box = clampBox([
+      (v[i] - lb.padX) / lb.r, (v[i + 1] - lb.padY) / lb.r,
+      (v[i + 2] - lb.padX) / lb.r, (v[i + 3] - lb.padY) / lb.r,
+    ], W, H);
+    if (raw === PERSON_CLASS) {
+      if (score >= PERSON_CONF && box[3] - box[1] >= MIN_PERSON_H) {
+        people.push({ box, score });
+      }
+      continue;
+    }
+    const cls = VEHICLE[raw];
     if (score < VEHICLE_CONF || !cls) continue;
-    dets.push({
-      cls, score,
-      box: clampBox([
-        (v[i] - lb.padX) / lb.r, (v[i + 1] - lb.padY) / lb.r,
-        (v[i + 2] - lb.padX) / lb.r, (v[i + 3] - lb.padY) / lb.r,
-      ], W, H),
-    });
+    dets.push({ cls, score, box });
   }
   // The exported model suppresses overlaps only within a class, so one car
   // can come back as a car and a truck. Keep the likelier label.
@@ -319,6 +340,14 @@ async function analyse(bitmap: ImageBitmap): Promise<FrameResult> {
   const kept: typeof dets = [];
   for (const d of dets) if (!kept.some((k) => iou(k.box, d.box) > SAME_OBJECT_IOU)) kept.push(d);
   const seen = assign(kept);
+
+  // The same within-class overlap problem applies to people: two boxes on one
+  // person would count as two, and the count is the reading.
+  people.sort((a, b) => b.score - a.score);
+  const keptPeople: typeof people = [];
+  for (const p of people) {
+    if (!keptPeople.some((k) => iou(k.box, p.box) > SAME_OBJECT_IOU)) keptPeople.push(p);
+  }
   const t1 = performance.now();
 
   // 2 + 3. Plates, read from full-resolution pixels. The budget goes where an
@@ -400,7 +429,12 @@ async function analyse(bitmap: ImageBitmap): Promise<FrameResult> {
     return { id: t.id, box: t.box, cls, score: t.score, plate };
   });
 
-  return { frame: { w: W, h: H }, tracks: out, timings: { vehicles: t1 - t0, plates: t2 - t1, total: t2 - t0 } };
+  return {
+    frame: { w: W, h: H },
+    tracks: out,
+    people: keptPeople,
+    timings: { vehicles: t1 - t0, plates: t2 - t1, total: t2 - t0 },
+  };
 }
 
 /* ── Messages ────────────────────────────────────────────────────── */

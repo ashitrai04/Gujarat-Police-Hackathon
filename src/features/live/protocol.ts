@@ -23,6 +23,26 @@ export interface LivePlate {
   stable: boolean;
 }
 
+/**
+ * A person in the frame.
+ *
+ * Deliberately not a LiveTrack. A track carries plate state -- the crop, the
+ * reads, whether the decode has settled -- and exists so a vehicle can be
+ * followed until its registration is legible. None of that applies to a
+ * person, and giving people tracks would put them in the queue for plate
+ * searches that can never succeed, spending the frame budget that the
+ * vehicles need.
+ *
+ * So people are counted per frame rather than followed. The count answers
+ * "how many are in view now", which is what a crowd reading is; it is not an
+ * attempt to count individuals over time, which from a single fixed camera
+ * this could not do honestly anyway.
+ */
+export interface LivePerson {
+  box: Box;
+  score: number;
+}
+
 export interface LiveTrack {
   id: number;
   box: Box;
@@ -34,6 +54,7 @@ export interface LiveTrack {
 export interface FrameResult {
   frame: { w: number; h: number };
   tracks: LiveTrack[];
+  people: LivePerson[];
   timings: { vehicles: number; plates: number; total: number };
 }
 
