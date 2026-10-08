@@ -804,6 +804,12 @@ def tunnel(domain=None, authtoken=None):
         flag = ''
         print('    no reserved domain: this URL changes on every restart')
 
+    # Recorded so the resume script reuses this exact flag rather than working
+    # it out again, differently, with nobody watching.
+    with open(f'{HOME}/env.sh', 'a') as f:
+        f.write(f'export NGROK_DOMAIN="{domain}"\n')
+        f.write(f'export NGROK_FLAG="{flag}"\n')
+
     subprocess.Popen(
         f'exec setsid {NGROK} http {PORT} {flag} --log stdout '
         f'> {HOME}/ngrok.log 2>&1 < /dev/null &',
@@ -1234,6 +1240,164 @@ def events_live(cam='cam08', seconds=30, device=None, store='all'):
     print('  the expected result on an ordinary street -- what this proves is')
     print('  that the chain runs on live footage and the rows are written.')
     return True
+
+
+_RESUME = r'''#!/usr/bin/env bash
+# Put everything back that should be running. Safe to run at any time: each
+# part is checked first, so this is a no-op when the host is healthy.
+#
+# Run from cron rather than from the notebook, because the notebook is the one
+# thing guaranteed not to be there after a restart -- which is the case this
+# exists for.
+source "$SENTINEL_HOME/env.sh" 2>/dev/null || exit 0
+[ -f "$VENV/bin/activate" ] && source "$VENV/bin/activate"
+LOG="$SENTINEL_HOME/resume.log"
+
+# Ollama: the language model the parser and verifier call.
+if ! curl -sf -m 5 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  echo "[resume $(date -Is)] ollama down, starting" >> "$LOG"
+  nohup ollama serve >> "$SENTINEL_HOME/ollama.log" 2>&1 &
+  sleep 8
+fi
+
+# The search service, through its own watchdog.
+if ! curl -sf -m 5 -H "x-ask-token: $ASK_TOKEN" \
+     "http://127.0.0.1:${ASK_PORT:-8077}/health" >/dev/null 2>&1; then
+  if ! pgrep -f "guard.sh" >/dev/null 2>&1; then
+    echo "[resume $(date -Is)] ask guard missing, starting" >> "$LOG"
+    setsid nohup bash "$SENTINEL_HOME/guard.sh" >/dev/null 2>&1 < /dev/null &
+  fi
+fi
+
+# The ANPR + scene worker, likewise.
+if ! pgrep -f live_worker.py >/dev/null 2>&1; then
+  if ! pgrep -f anpr_guard.sh >/dev/null 2>&1; then
+    echo "[resume $(date -Is)] anpr guard missing, starting" >> "$LOG"
+    setsid nohup bash "$SENTINEL_HOME/anpr_guard.sh" >/dev/null 2>&1 < /dev/null &
+  fi
+fi
+
+# The public URL. Without it the deployed site cannot reach this host at all,
+# so it is worth restarting even though nothing on this machine needs it.
+# NGROK_FLAG is whatever tunnel() established this ngrok build accepts: --url
+# wants a full URL and --domain a bare host, and which one exists depends on
+# the version. Reusing its answer is the only way a restart comes back on the
+# same hostname instead of a random one while appearing to have worked.
+if [ -n "$NGROK_FLAG" ] && ! pgrep -f "ngrok http" >/dev/null 2>&1; then
+  echo "[resume $(date -Is)] tunnel down, starting" >> "$LOG"
+  setsid nohup "$SENTINEL_HOME/ngrok/ngrok" http "${ASK_PORT:-8077}" \
+      $NGROK_FLAG --log stdout >> "$SENTINEL_HOME/ngrok.log" 2>&1 < /dev/null &
+fi
+'''
+
+
+def keepalive_install(every_minutes=5):
+    """Have cron put things back, so the notebook is not load-bearing.
+
+    The watchdogs already restart a process that crashes, and setsid already
+    means they outlive the kernel that started them. What neither survives is
+    the host going away -- a reboot, or the session being reclaimed -- because
+    nothing then starts them again.
+
+    So the same checks run from cron: once at boot, and every few minutes in
+    case a guard itself was killed. Each check is a no-op when the thing is
+    already up, which is why running it this often is reasonable.
+
+    Cron is absent from a good many notebook containers. That is reported
+    rather than worked around: a fake success here would be worse than knowing
+    the host needs the one cell re-run after a restart.
+    """
+    with open(f'{HOME}/resume.sh', 'w') as f:
+        f.write(_RESUME)
+    os.chmod(f'{HOME}/resume.sh', 0o755)
+
+    rc, _ = sh('command -v crontab', quiet=True)
+    if rc != 0:
+        print('  no crontab on this host, so nothing can run at boot.')
+        print(f'  {HOME}/resume.sh is written and works -- run start_all()')
+        print('  again after a restart, or call it from whatever this host')
+        print('  does provide.')
+        return False
+
+    line_boot = f'@reboot SENTINEL_HOME={HOME} bash {HOME}/resume.sh'
+    line_tick = (f'*/{every_minutes} * * * * SENTINEL_HOME={HOME} '
+                 f'bash {HOME}/resume.sh')
+    # Replace rather than append: re-running this must not stack up copies.
+    sh(f'(crontab -l 2>/dev/null | grep -v "{HOME}/resume.sh"; '
+       f'echo "{line_boot}"; echo "{line_tick}") | crontab -', quiet=True)
+    rc, out = sh('crontab -l 2>/dev/null | grep -c resume.sh', quiet=True)
+    n = out.strip().splitlines()[-1].strip() if out.strip() else '0'
+    print(f'  cron: {n} entries (boot + every {every_minutes} min)')
+    return True
+
+
+def start_all(events='crowd,fire,accident', domain=None, seconds=30,
+              rebuild_index=False):
+    """Bring the whole server up, in order, with one call.
+
+    This is the only cell that needs running. Every step is idempotent and
+    checks before acting, so it is also the right thing to run after a
+    restart, after a crash, or when unsure what state the host is in -- it
+    will skip what is already healthy and fix what is not.
+
+    Order matters and is not arbitrary: packages before models, models before
+    the index, the index before the service (it refuses to start without
+    one), the service before the tunnel (which has nothing to publish
+    otherwise), and the worker last because it is the only part that does not
+    block anything else.
+    """
+    print('=' * 62)
+    print(' SENTINEL — bringing everything up')
+    print('=' * 62)
+
+    print('\n[1/7] code and python')
+    setup()
+
+    print('\n[2/7] packages the plate and scene workers need')
+    anpr_setup()
+
+    print('\n[3/7] language model')
+    if not _ollama_up():
+        _start_ollama()
+    print('  ollama: ' + ('up' if _ollama_up() else 'DOWN — ollama_debug()'))
+
+    print('\n[4/7] search index')
+    if rebuild_index or not os.path.isdir(INDEX):
+        vids = [f for f in os.listdir(FOOTAGE)
+                if f.lower().endswith('.mp4')] if os.path.isdir(FOOTAGE) else []
+        if vids:
+            build_index()
+        else:
+            print(f'  no .mp4 in {FOOTAGE} and no index, so prompt search')
+            print('  cannot start. Everything else below still will.')
+    else:
+        print(f'  present at {INDEX}')
+
+    print('\n[5/7] search service')
+    if os.path.isdir(INDEX):
+        start()
+    else:
+        print('  skipped — needs an index')
+
+    print('\n[6/7] public URL')
+    if _service_up():
+        tunnel(domain)
+    else:
+        print('  skipped — nothing to publish until the service is up')
+
+    print('\n[7/7] continuous plate + scene worker')
+    anpr_start(seconds=seconds, events=events)
+
+    print('\n[+] keep-alive')
+    keepalive_install()
+
+    print('\n' + '=' * 62)
+    print(' where things stand')
+    print('=' * 62)
+    status()
+    anpr_status()
+    print('\nThe kernel can be stopped now: every part runs detached under')
+    print('its own watchdog. Re-run start_all() any time to check and repair.')
 
 
 def anpr_setup():
@@ -1685,6 +1849,7 @@ def ask(prompt, k=5, verify=False):
 
 
 print(__doc__.split('WHAT THIS TOUCHES')[0].strip())
+print('\nSTART:  start_all()  — everything, in order, idempotent')
 print('\nsteps:  preflight()  setup()  build_index()  start()  ask("…")')
 print('        status()  logs()  stop()')
 print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')

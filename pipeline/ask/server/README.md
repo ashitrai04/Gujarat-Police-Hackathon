@@ -21,7 +21,42 @@ written outside your home directory and nothing needs sudo — Ollama comes from
 its release tarball rather than the install script, which wants `/usr/local`
 and a systemd unit.
 
-## Quick start
+## Quick start — one cell
+
+On a Jupyter host, paste [`ONE_CELL.py`](ONE_CELL.py) into a single cell and
+run it. It clones or updates the repository, loads the bootstrap, and calls
+`start_all()`, which brings up everything in order: packages, Ollama and the
+language model, the search index, the prompt-search service, the public URL,
+and the continuous worker doing plates plus crowd, fire and accident.
+
+Credentials go in once, in their own cell, before the first run:
+
+```python
+set_credentials(
+    SUPABASE_URL="https://<project>.supabase.co",
+    SUPABASE_SERVICE_KEY="<service_role key>",
+    SENTINEL_ACCESS_EMAIL="<grid email>",
+    SENTINEL_ACCESS_KEY="<grid key>",
+)
+```
+
+They are stored in `~/sentinel/creds.sh` at mode 600 and read on every later
+run. The service-role key is server-side only and must never reach a browser
+bundle or a commit.
+
+`start_all()` is also the right thing to run when you do not know what state
+the host is in. Every step checks before acting, so it skips what is healthy
+and repairs what is not — after a crash, after a restart, or on a fresh host.
+
+Once it finishes the kernel can be stopped. Each part runs detached under its
+own watchdog, and `keepalive_install()` adds a cron entry at boot and every
+five minutes to put back anything that disappeared. Where the host has no
+cron — common in notebook containers — it says so rather than pretending, and
+the one cell has to be re-run after a restart.
+
+## Quick start — step by step
+
+The individual steps, for when something needs doing by hand:
 
 ```bash
 git clone https://github.com/ashitrai04/Gujarat-Police-Hackathon.git ~/sentinel-command-center
