@@ -54,6 +54,42 @@ five minutes to put back anything that disappeared. Where the host has no
 cron — common in notebook containers — it says so rather than pretending, and
 the one cell has to be re-run after a restart.
 
+## Running it on Kaggle instead
+
+[`KAGGLE_CELL.py`](KAGGLE_CELL.py) is the same stack on a Kaggle notebook, for
+when the dedicated host is unavailable. The bootstrap notices Kaggle and
+adjusts on its own; nothing about the dedicated server changes.
+
+What it does differently, and why:
+
+| | GPU server | Kaggle |
+|---|---|---|
+| Home | `~/sentinel` | `/kaggle/working/sentinel` — the only volume kept |
+| Python | its own venv | the image's interpreter, which already has CUDA torch |
+| Language model | `qwen2.5vl:7b` | `qwen2.5vl:3b`, for the download and the clock |
+| Credentials | `creds.sh`, written once | Kaggle Secrets, re-read every session |
+| Stays up via | cron, after the kernel is gone | `serve_forever()`, a blocking cell |
+
+The honest limit: a Kaggle session ends after about 12 hours, an idle kernel
+is reclaimed sooner, and GPU time is capped weekly. It cannot be left running
+the way the dedicated host can. `serve_forever()` holds the session open and
+repairs what dies while it runs, and everything stops when the session does.
+
+### Which host the web app uses
+
+It already decides for itself. The browser probes its endpoints in priority
+order — `VITE_ASK_API_URL` first, then `VITE_ASK_FALLBACK_URL` — and
+`askHealth()` re-probes the better ones every two minutes, logging
+`[ask] back on …` when it moves up. So:
+
+- **Keep `VITE_ASK_API_URL` as the GPU server.** Do not repoint it.
+- Set `VITE_ASK_FALLBACK_URL` to the Kaggle tunnel if a second reserved
+  hostname is available. The app then uses Kaggle while the GPU server is
+  down and returns to it by itself, with no redeploy.
+- With only one reserved hostname, give Kaggle that same name — the GPU
+  server is not using it while it is down — and nothing needs changing at
+  all. Whoever holds the name serves.
+
 ## Quick start — step by step
 
 The individual steps, for when something needs doing by hand:

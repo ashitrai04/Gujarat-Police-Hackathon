@@ -44,7 +44,15 @@ import urllib.error
 import urllib.request
 
 # ── Where things live ──────────────────────────────────────────────────
-HOME = os.path.expanduser(os.environ.get('SENTINEL_HOME', '~/sentinel'))
+#
+# Kaggle is a different shape of host and gets different defaults. Its home
+# directory is thrown away when the session ends, while /kaggle/working is the
+# 20 GB volume that is kept and saved as the notebook's output -- so the
+# models, the index and the credentials go there, and a later session can
+# attach that output as a dataset instead of downloading everything again.
+ON_KAGGLE = os.path.isdir('/kaggle/working')
+_DEFAULT_HOME = '/kaggle/working/sentinel' if ON_KAGGLE else '~/sentinel'
+HOME = os.path.expanduser(os.environ.get('SENTINEL_HOME', _DEFAULT_HOME))
 REPO = os.path.expanduser(os.environ.get('SENTINEL_REPO', '~/sentinel-command-center'))
 GIT_URL = os.environ.get(
     'SENTINEL_GIT', 'https://github.com/ashitrai04/Gujarat-Police-Hackathon.git')
@@ -226,6 +234,20 @@ def _ensure_python():
          shares a dependency set with whatever else this account runs.
     """
     global PY
+
+    # An interpreter named explicitly wins over all of it, and Kaggle names
+    # itself. Its image already carries torch built against the right CUDA,
+    # plus transformers, ultralytics and opencv; a fresh venv would see none
+    # of them and spend several GB and a chunk of a weekly GPU allowance
+    # rebuilding what is already installed. Only the few genuinely missing
+    # packages get added to it.
+    forced = os.environ.get('ASK_PYTHON', '').strip()
+    if not forced and ON_KAGGLE:
+        forced = sys.executable
+    if forced and _works(forced):
+        PY = forced
+        print(f'    using the interpreter already here: {PY}')
+        return PY
 
     if _works(f'{VENV}/bin/python'):
         PY = f'{VENV}/bin/python'
@@ -753,7 +775,14 @@ NGROK = f'{HOME}/ngrok/ngrok'
 
 
 def install_ngrok(authtoken=None):
-    """Fetch ngrok into this account and, if given, save the authtoken.
+    """Fetch ngrok into this account and save the authtoken.
+
+    The token falls back to NGROK_AUTHTOKEN in the environment, which is what
+    makes this work on a host that keeps nothing. ngrok writes its config into
+    the home directory, and on Kaggle that is discarded with the session, so a
+    token given once by hand is gone by the next run and the tunnel fails for
+    a reason that has nothing to do with the tunnel. Read from the environment
+    it comes back every time, out of the notebook's own secret store.
 
     Needed when the host answers only on its own network. This box reaches the
     internet outward — it pulled a gigabyte from GitHub — but nothing reaches
@@ -771,6 +800,7 @@ def install_ngrok(authtoken=None):
             print('!! download failed; get it from https://ngrok.com/download')
             return False
         sh(f'chmod +x {NGROK}', quiet=True)
+    authtoken = authtoken or os.environ.get('NGROK_AUTHTOKEN', '').strip()
     if authtoken:
         sh(f'{NGROK} config add-authtoken {authtoken}', quiet=True)
         print('    authtoken saved')
@@ -1332,7 +1362,7 @@ def keepalive_install(every_minutes=5):
 
 
 def start_all(events='crowd,fire,accident', domain=None, seconds=30,
-              rebuild_index=False):
+              rebuild_index=False, authtoken=None):
     """Bring the whole server up, in order, with one call.
 
     This is the only cell that needs running. Every step is idempotent and
@@ -1381,7 +1411,7 @@ def start_all(events='crowd,fire,accident', domain=None, seconds=30,
 
     print('\n[6/7] public URL')
     if _service_up():
-        tunnel(domain)
+        tunnel(domain, authtoken)
     else:
         print('  skipped — nothing to publish until the service is up')
 
@@ -1398,6 +1428,84 @@ def start_all(events='crowd,fire,accident', domain=None, seconds=30,
     anpr_status()
     print('\nThe kernel can be stopped now: every part runs detached under')
     print('its own watchdog. Re-run start_all() any time to check and repair.')
+
+
+def serve_forever(check_every=120, hours=11.5):
+    """Hold the session open, checking and repairing as it goes.
+
+    This is how a notebook host stays up, and it works the opposite way round
+    from the dedicated server. There, start_all() returns and cron keeps
+    things alive after the kernel is gone. On Kaggle there is no cron, no
+    reboot to recover from, and an idle kernel is reclaimed within the hour --
+    so the thing that must not stop is this cell. It blocks on purpose.
+
+    Each pass re-checks Ollama, the search service and the worker, and puts
+    back whatever has gone, which is the same set of checks cron runs on the
+    other host. The printing matters as much as the checking: output is what
+    marks the kernel as busy.
+
+    `hours` stops it slightly before Kaggle's own 12-hour ceiling, so the loop
+    ends on its own terms with a readable summary rather than the session
+    being cut mid-sentence.
+    """
+    started = time.time()
+    deadline = started + hours * 3600
+    passes = 0
+    repaired = 0
+
+    print(f'==> holding the session open for up to {hours:g}h, '
+          f'checking every {check_every}s')
+    print('    Stop this cell and everything here stops with it.\n')
+    try:
+        while time.time() < deadline:
+            passes += 1
+            up = []
+            fixed = []
+
+            if _ollama_up():
+                up.append('ollama')
+            else:
+                _start_ollama()
+                fixed.append('ollama')
+
+            if _service_up():
+                up.append('search')
+            elif os.path.isdir(INDEX):
+                rc, _ = sh('pgrep -f guard.sh', quiet=True)
+                if rc != 0:
+                    sh(f'source {HOME}/env.sh && setsid nohup bash '
+                       f'{HOME}/guard.sh > /dev/null 2>&1 < /dev/null &',
+                       quiet=True)
+                    fixed.append('search')
+
+            if _anpr_running():
+                up.append('worker')
+            else:
+                rc, _ = sh('pgrep -f anpr_guard.sh', quiet=True)
+                if rc != 0 and os.path.isfile(f'{HOME}/anpr_guard.sh'):
+                    sh(f'source {HOME}/env.sh && setsid nohup bash '
+                       f'{HOME}/anpr_guard.sh > /dev/null 2>&1 < /dev/null &',
+                       quiet=True)
+                    fixed.append('worker')
+
+            rc, _ = sh('pgrep -f "ngrok http"', quiet=True)
+            if rc == 0:
+                up.append('tunnel')
+
+            repaired += len(fixed)
+            mins = (time.time() - started) / 60
+            note = f'  restarted: {", ".join(fixed)}' if fixed else ''
+            print(f'[{mins:6.1f} min] up: {", ".join(up) or "nothing"}{note}',
+                  flush=True)
+            time.sleep(check_every)
+    except KeyboardInterrupt:
+        print('\n==> stopped by hand')
+
+    mins = (time.time() - started) / 60
+    print(f'\n==> held for {mins:.0f} min over {passes} checks, '
+          f'{repaired} restart(s)')
+    print('    Everything here stops when the session does. Re-run the cell')
+    print('    to bring it back on the same URL.')
 
 
 def anpr_setup():
@@ -1470,6 +1578,12 @@ def anpr_start(seconds=30, source='hls', events='',
     card is shared, and a worker that a colleague's job can quietly end is not
     one a control room can rely on.
     """
+    # Resolved before anything reads PY. Called on its own -- without setup()
+    # earlier in the session -- PY is still the module-level guess at a venv
+    # path, which on a host that uses its own interpreter does not exist, and
+    # _write_env() would record it for the watchdog to fail on forever.
+    _ensure_python()
+
     if not os.path.isfile(f'{PIPELINE}/live_worker.py'):
         print('!! live_worker.py missing — git pull in the repo first')
         return False
@@ -1856,6 +1970,7 @@ print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')
 print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('diag :  capture_check(cam)  -- why one capture produced no video')
 print('        anpr_test()         -- plate accuracy on a recording')
+print('hold :  serve_forever()     -- keep a notebook session alive')
 print('        ffmpeg_check()      -- which ffmpeg capability is broken')
 print('scene:  events_live()       -- all three on a LIVE camera, now')
 print('        events_test()       -- the same on a recording')
