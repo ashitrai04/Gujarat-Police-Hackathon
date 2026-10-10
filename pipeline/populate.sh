@@ -3,8 +3,20 @@
 # The live feed is currently night footage at 854x480 — plates are not
 # readable there. The archive is 1080p daylight, which is what the pipeline
 # was measured against.
-export SUPABASE_URL="https://rexxfkbgcvlzgyhwnsrp.supabase.co"
-export SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJleHhma2JnY3Zsemd5aHduc3JwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODYwODQ0OCwiZXhwIjoyMTA0MTg0NDQ4fQ.xNOiI-N33JojVh8CXcvdQ6Hrc4qPM0DbiZU0n0Z8wuc"
+#
+# Credentials are NOT in this file. A service-role key bypasses row-level
+# security entirely, and this script is committed -- anything written here is
+# published the moment it is pushed, and stays in the history afterwards even
+# if it is deleted later.
+#
+# They come from pipeline/.env.worker, which is gitignored, or from the
+# environment. Create it from .env.worker.example and fill it in.
+if [ -f "$(dirname "$0")/.env.worker" ]; then
+  set -a; . "$(dirname "$0")/.env.worker"; set +a
+fi
+: "${SUPABASE_URL:?set SUPABASE_URL in pipeline/.env.worker or the environment}"
+: "${SUPABASE_SERVICE_KEY:?set SUPABASE_SERVICE_KEY in pipeline/.env.worker or the environment}"
+export SUPABASE_URL SUPABASE_SERVICE_KEY
 export SENTINEL_PIPELINE_DIR="$(pwd)/sentinel-gujarat-pipeline"
 export SENTINEL_OUT="D:/React folder/anpr_video_test/archive_out"
 PY="D:/React folder/.venv/Scripts/python.exe"
