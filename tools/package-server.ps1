@@ -105,6 +105,14 @@ if (Test-Path $guide) {
     Write-Host "  LAPTOP_SETUP.md  (also at the top level, so it is seen)"
 }
 
+# The prompt for handing the whole job to an agent on the far side. Top level
+# for the same reason as the guide: it is only useful if it is found.
+$agentPrompt = Join-Path $repo 'pipeline\ask\server\AGENT_PROMPT.md'
+if (Test-Path $agentPrompt) {
+    Copy-Item $agentPrompt (Join-Path $root 'AGENT_PROMPT.md')
+    Write-Host "  AGENT_PROMPT.md"
+}
+
 # -- Refuse to ship a secret ------------------------------------------------
 # The exclusions above are patterns, and a pattern only catches what it was
 # written for. This looks at the staged bytes for the shapes a key actually
