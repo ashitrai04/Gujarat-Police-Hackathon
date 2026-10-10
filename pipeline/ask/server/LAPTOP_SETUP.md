@@ -82,7 +82,30 @@ doctor()        what is broken and what to run next
 
 ---
 
-## Windows laptop
+## Windows laptop - the short way
+
+Two commands. `SETUP.ps1` installs Python and Ollama if they are missing,
+builds the environment, pulls the model, asks for the four credentials and
+checks the result. It is safe to re-run: every step checks before acting, so
+a second run repairs whatever failed rather than starting over.
+
+```powershell
+cd <where you unzipped it>
+powershell -ExecutionPolicy Bypass -File .\SETUP.ps1
+.\RUN-SERVER.ps1
+```
+
+Most of the setup time is downloading: roughly 3 GB for the language model
+and 2-3 GB for PyTorch.
+
+`RUN-SERVER.ps1 -TestOnly` runs one live camera end to end first -- sign-in,
+capture, both models, the database write -- which is the quickest way to know
+the whole chain works before committing to a long run.
+
+Windows has no `setsid`, so the worker holds its window open. Closing it
+stops the worker. Leave it running, or wrap it with NSSM to survive a logout.
+
+## Windows laptop - by hand
 
 `bootstrap.py` is written around bash, `setsid` and POSIX paths, so it does
 **not** run on Windows. Use `start.ps1`, which is the Windows launcher, and

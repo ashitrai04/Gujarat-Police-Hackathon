@@ -91,6 +91,14 @@ foreach ($f in @('start.ps1', 'README.md')) {
     if (Test-Path $src) { Copy-Item $src (Join-Path $root $f); Write-Host "  $f" }
 }
 
+# The two scripts that make this a two-command install on Windows. They go at
+# the top of the archive because that is where someone who has just unzipped
+# it will look, and they expect to sit beside pipeline\.
+foreach ($f in 'SETUP.ps1', 'RUN-SERVER.ps1') {
+    $src = Join-Path $repo "tools\laptop\$f"
+    if (Test-Path $src) { Copy-Item $src (Join-Path $root $f); Write-Host "  $f" }
+}
+
 $guide = Join-Path $repo 'pipeline\ask\server\LAPTOP_SETUP.md'
 if (Test-Path $guide) {
     Copy-Item $guide (Join-Path $root 'LAPTOP_SETUP.md')
