@@ -1362,7 +1362,7 @@ def keepalive_install(every_minutes=5):
 
 
 def start_all(events='crowd,fire,accident', domain=None, seconds=30,
-              rebuild_index=False, authtoken=None):
+              rebuild_index=False, authtoken=None, expose='auto'):
     """Bring the whole server up, in order, with one call.
 
     This is the only cell that needs running. Every step is idempotent and
@@ -1410,10 +1410,25 @@ def start_all(events='crowd,fire,accident', domain=None, seconds=30,
         print('  skipped — needs an index')
 
     print('\n[6/7] public URL')
-    if _service_up():
-        tunnel(domain, authtoken)
-    else:
+    # 'auto' means: ngrok when there is a token for it, because a reserved
+    # name is worth having; cloudflare otherwise, because it needs no account
+    # at all; and 'none' for a host that only runs the worker, which needs no
+    # inbound access whatsoever -- it writes to the database and the browser
+    # reads from there.
+    want = expose
+    if want == 'auto':
+        has_ngrok = bool(authtoken or os.environ.get('NGROK_AUTHTOKEN')
+                         or os.path.isfile(NGROK))
+        want = 'ngrok' if has_ngrok else 'cloudflare'
+    if not _service_up():
         print('  skipped — nothing to publish until the service is up')
+    elif want == 'none':
+        print('  skipped — asked not to. The worker still writes to the')
+        print('  database, which is all the control room needs it to do.')
+    elif want == 'cloudflare':
+        tunnel_cf()
+    else:
+        tunnel(domain, authtoken)
 
     print('\n[7/7] continuous plate + scene worker')
     anpr_start(seconds=seconds, events=events)
@@ -1489,8 +1504,17 @@ def serve_forever(check_every=120, hours=11.5):
                     fixed.append('worker')
 
             rc, _ = sh('pgrep -f "ngrok http"', quiet=True)
-            if rc == 0:
+            rc2, _ = sh('pgrep -f "cloudflared tunnel"', quiet=True)
+            if rc == 0 or rc2 == 0:
                 up.append('tunnel')
+            elif os.environ.get('CF_TUNNEL') == '1':
+                # A quick tunnel that died comes back on a different name, so
+                # the link has to be read off the log and pasted again. Said
+                # here rather than silently restarted, because a restart the
+                # operator does not know about is a link that silently stops
+                # working.
+                fixed.append('tunnel (NEW URL — see cloudflared.log)')
+                tunnel_cf(wait=30)
 
             repaired += len(fixed)
             mins = (time.time() - started) / 60
@@ -1506,6 +1530,95 @@ def serve_forever(check_every=120, hours=11.5):
           f'{repaired} restart(s)')
     print('    Everything here stops when the session does. Re-run the cell')
     print('    to bring it back on the same URL.')
+
+
+CF = f'{HOME}/cloudflared/cloudflared'
+
+
+def install_cloudflared():
+    """Fetch cloudflared. No account, no token, nothing to sign up for."""
+    if os.path.isfile(CF):
+        return True
+    print('==> fetching cloudflared')
+    os.makedirs(f'{HOME}/cloudflared', exist_ok=True)
+    url = ('https://github.com/cloudflare/cloudflared/releases/latest/'
+           'download/cloudflared-linux-amd64')
+    rc, _ = sh(f'curl -fsSL {url} -o {CF} && chmod +x {CF}')
+    if rc != 0 or not os.path.isfile(CF):
+        print('!! could not download cloudflared')
+        return False
+    return True
+
+
+def tunnel_cf(wait=60):
+    """Put the service on a public URL without an account.
+
+    The alternative to ngrok, and the one that needs nothing set up: a quick
+    tunnel is anonymous, so there is no token to store and nothing to lose
+    when a host throws its home directory away.
+
+    What it costs is the hostname. A quick tunnel gets a random
+    trycloudflare.com name every time it starts, so it cannot be written into
+    a build-time environment variable -- by the next session it points
+    nowhere. That is why this prints a ready-made link with `?ask=` on it: the
+    web application takes that parameter, remembers it in the browser, and
+    tries it ahead of everything else. Pasting the link once per session is
+    the whole configuration step.
+    """
+    if not install_cloudflared():
+        return None
+    if not _service_up():
+        print('!! the service is not running — start() first')
+        return None
+
+    sh('pkill -f "cloudflared tunnel" 2>/dev/null; true', quiet=True)
+    log = f'{HOME}/cloudflared.log'
+    open(log, 'w').close()
+    subprocess.Popen(
+        f'exec setsid {CF} tunnel --no-autoupdate --url '
+        f'http://localhost:{PORT} > {log} 2>&1 < /dev/null &',
+        shell=True, executable='/bin/bash',
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+
+    print('==> opening the tunnel', end='', flush=True)
+    url = ''
+    for _ in range(wait):
+        time.sleep(1)
+        print('.', end='', flush=True)
+        try:
+            text = open(log, encoding='utf8', errors='replace').read()
+        except OSError:
+            continue
+        m = re.search(r'https://[-a-z0-9]+\.trycloudflare\.com', text)
+        if m:
+            url = m.group(0)
+            break
+    print()
+
+    if not url:
+        print('!! no URL appeared. Last few lines:')
+        sh(f'tail -n 12 {log}')
+        return None
+
+    # Recorded so a later check can tell a dead tunnel from no tunnel. Set in
+    # this process too, not only in env.sh: serve_forever() runs here in the
+    # notebook and would never see a variable that only exists in a file the
+    # detached scripts source.
+    os.environ['CF_TUNNEL'] = '1'
+    with open(f'{HOME}/env.sh', 'a') as f:
+        f.write('export CF_TUNNEL=1\n')
+
+    token = _token()
+    print(f'  {url}')
+    print()
+    print('  Open this link once and the browser will remember it:')
+    print(f'    <your site>/?ask={url}&askToken={token}')
+    print()
+    print('  The name changes every time this starts, so it cannot go in a')
+    print('  Vercel variable. Clearing it later is /?ask=off, which falls')
+    print('  back to the GPU server.')
+    return url
 
 
 def anpr_setup():
@@ -1976,7 +2089,8 @@ print('scene:  events_live()       -- all three on a LIVE camera, now')
 print('        events_test()       -- the same on a recording')
 print('        events_thresholds() -- set them from what you measured')
 print('        anpr_start(events=\'crowd,fire,accident\')  -- run them live')
-print('share:  tunnel()   — put it on a public URL for the web app')
+print('share:  tunnel()   — public URL via ngrok (reserved name)')
+print('        tunnel_cf() — public URL, no account needed')
 print('check:  doctor()   — what is broken and what to run next')
 print('        models()   — which models are on this machine')
 print('debug:  ollama_debug()  ollama_restart()')

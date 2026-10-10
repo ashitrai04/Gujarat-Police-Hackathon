@@ -28,16 +28,29 @@ SENTINEL_HOME to point at it.
 BEFORE THE FIRST RUN
 --------------------
 1. Settings -> Accelerator -> GPU (T4 or P100).
-2. Settings -> Internet -> On. Without it nothing can be downloaded and the
-   tunnel cannot open. It needs a phone-verified account.
+2. Settings -> Internet -> On. Without it nothing can be downloaded. It needs
+   a phone-verified account.
 3. Add-ons -> Secrets, and add these four, so credentials are never in the
    notebook source and survive between sessions:
        SUPABASE_URL
        SUPABASE_SERVICE_KEY
        SENTINEL_ACCESS_EMAIL
        SENTINEL_ACCESS_KEY
-   Add NGROK_AUTHTOKEN and NGROK_DOMAIN too if the tunnel should come up on
-   the reserved hostname the web app already points at.
+   NGROK_AUTHTOKEN and NGROK_DOMAIN are optional. With them the tunnel comes
+   up on the reserved hostname the web app already points at; without them a
+   Cloudflare quick tunnel is used instead, which needs no account.
+
+HOW MUCH OF THIS NEEDS A TUNNEL
+-------------------------------
+Less than it looks. The plate and scene worker is a writer, not an API: it
+reads the feeds, writes rows and snapshots into Supabase, and the browser
+reads them from there. Detections, crowd counts, the Scene tab and the map
+all work with no inbound access to this notebook at all.
+
+Only the assistant -- prompt search -- is called by the browser directly, and
+that is the one thing a tunnel is for. Kaggle has no inbound ports, so if you
+want the assistant you need one; if you do not, pass expose='none' below and
+skip it entirely.
 
 THE GPU SERVER IS STILL THE PREFERRED HOST
 ------------------------------------------
@@ -118,8 +131,20 @@ if creds:
 # keepalive_install() will report that there is no crontab here. That is
 # correct and expected: on Kaggle the keep-alive is the blocking cell below,
 # not cron.
+# expose='auto' uses ngrok when there is a token for it, because a reserved
+# hostname can go in a Vercel variable and be forgotten about. With no token
+# it uses a Cloudflare quick tunnel instead, which needs no account and no
+# sign-up -- the trade is a hostname that changes every run, so the link has
+# to be pasted into the site once per session (it prints one, ready to click).
+#
+# expose='none' is also a reasonable answer here. The plate and scene worker
+# does not need inbound access at all: it writes to Supabase and the browser
+# reads from Supabase, so crowd counts, detections and their snapshots all
+# arrive with no tunnel of any kind. Only the assistant talks to this host
+# directly.
 start_all(                                                  # noqa: F821
     events='crowd,fire,accident',
+    expose='auto',
     domain=creds.get('NGROK_DOMAIN') or None,
     # Passed every run, because ngrok stores it in the home directory and
     # Kaggle throws that away with the session.

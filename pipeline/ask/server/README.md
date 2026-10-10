@@ -75,6 +75,37 @@ is reclaimed sooner, and GPU time is capped weekly. It cannot be left running
 the way the dedicated host can. `serve_forever()` holds the session open and
 repairs what dies while it runs, and everything stops when the session does.
 
+### Without an ngrok account
+
+Most of this needs no tunnel at all. The plate and scene worker is a writer,
+not an API: it reads the feeds, writes rows and snapshots into Supabase, and
+the browser reads them from there. Detections, crowd counts, the Scene tab and
+the map all work with no inbound access to the host. `start_all(expose='none')`
+skips the tunnel entirely and loses none of that.
+
+Only prompt search is called by the browser directly. Kaggle has no inbound
+ports, so that one does need a tunnel — but not ngrok:
+
+| | ngrok | Cloudflare quick tunnel |
+|---|---|---|
+| Account | required | none |
+| Hostname | reserved, stable | random, changes every run |
+| Goes in a Vercel variable | yes | no |
+
+`start_all(expose='auto')` picks: ngrok when a token or binary is present,
+Cloudflare otherwise. `tunnel_cf()` forces the second.
+
+Because a quick tunnel's name changes, it is pasted into the site rather than
+built in. `tunnel_cf()` prints a ready-made link:
+
+```
+<your site>/?ask=https://xxx.trycloudflare.com&askToken=<token>
+```
+
+Opening that once stores the address in that browser and tries it ahead of
+both environment variables. `/?ask=off` clears it and falls straight back to
+the GPU server.
+
 ### Which host the web app uses
 
 It already decides for itself. The browser probes its endpoints in priority
