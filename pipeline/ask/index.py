@@ -58,6 +58,17 @@ def camera_id_from_filename(path: str) -> str:
     junctions.
     """
     base = os.path.splitext(os.path.basename(path))[0]
+
+    # A file already named after its camera, which is what fetch_archive.py
+    # writes ('cam08.ts'). Without this the slug branch below turned it into
+    # 'cam-cam08' -- an id the registry does not hold, so every frame from the
+    # archive indexed against a camera that does not exist and pinned nowhere
+    # on the map. The failure is quiet: search still returns the frame, it
+    # just cannot say where it was taken.
+    m = re.fullmatch(r'cam[-_ ]?(\d+)', base.strip(), re.IGNORECASE)
+    if m:
+        return f'cam{int(m.group(1)):02d}'
+
     after = base.split('_', 1)[1] if '_' in base else base
     m = re.match(r'(\d+)', after)
     if m:
