@@ -70,6 +70,13 @@ def videos_in(path) -> list:
                   if f.lower().endswith(VIDEO_EXTS))
 
 
+# Made once, here, because almost every function in this file writes into it
+# and only setup() ever created it. Calling anything before setup() -- which
+# is exactly what somebody does when they set credentials first -- failed on
+# a FileNotFoundError naming a path, at the moment an operator is least able
+# to tell a missing directory from a mistyped value.
+os.makedirs(HOME, exist_ok=True)
+
 VENV = f'{HOME}/venv'
 # Resolved by _ensure_python(); not every host can build a venv the usual way.
 PY = f'{VENV}/bin/python'
@@ -941,6 +948,13 @@ def set_credentials(**kw):
             print(f'  ignoring unknown key {key}')
             continue
         have[key] = str(v).strip()
+
+    # Created here rather than assumed. Credentials are usually the first
+    # thing set on a fresh host -- before setup() has run and made this
+    # directory -- and the failure was a FileNotFoundError naming a path, at
+    # the one moment the operator is least able to tell whether they had
+    # mistyped something.
+    os.makedirs(os.path.dirname(path), exist_ok=True)
 
     with open(path, 'w') as f:
         f.write('# Written by set_credentials(). Not generated, not committed.\n')
