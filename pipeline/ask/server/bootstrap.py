@@ -466,6 +466,21 @@ def _write_env():
 
 
 def _token():
+    """The shared secret the browser must send. Stable, or nothing works.
+
+    ASK_TOKEN in the environment wins. The deployed site carries this value
+    baked in at build time, so a host that invents its own on first run
+    answers 401 to every request from that site -- and a 401 looks exactly
+    like an unreachable server in the browser, which sends you hunting the
+    network instead of the secret.
+
+    That matters most on a notebook host, which starts empty: without this,
+    each new session generates a different token and the site has to be
+    redeployed to match it.
+    """
+    env = os.environ.get('ASK_TOKEN', '').strip()
+    if env:
+        return env
     p = f'{HOME}/token'
     if os.path.isfile(p):
         return open(p).read().strip()
