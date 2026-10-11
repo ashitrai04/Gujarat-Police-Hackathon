@@ -86,6 +86,17 @@ if ($NoWeights) {
 Write-Host "  supabase/migrations/"
 Copy-Tree (Join-Path $repo 'supabase\migrations') (Join-Path $root 'supabase\migrations')
 
+# The archive's camera list. fetch_archive.py can discover the cameras by
+# asking the bucket, but carrying the file saves forty probe requests and is
+# the same list the deployed site reads.
+$fb = Join-Path $repo 'public\fallback-index.json'
+if (Test-Path $fb) {
+    $pub = Join-Path $root 'public'
+    New-Item -ItemType Directory -Path $pub -Force | Out-Null
+    Copy-Item $fb (Join-Path $pub 'fallback-index.json')
+    Write-Host "  public/fallback-index.json"
+}
+
 foreach ($f in @('start.ps1', 'README.md')) {
     $src = Join-Path $repo $f
     if (Test-Path $src) { Copy-Item $src (Join-Path $root $f); Write-Host "  $f" }

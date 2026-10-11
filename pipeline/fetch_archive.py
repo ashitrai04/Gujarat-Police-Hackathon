@@ -52,6 +52,31 @@ def get(url: str, timeout: int = 120) -> bytes:
         return r.read()
 
 
+def discover(limit: int = 40) -> list[str]:
+    """Ask the bucket which cameras it actually has.
+
+    The camera list normally comes from the web application's index file, but
+    a machine running only the server half does not necessarily have the web
+    application's files beside it. Rather than fail there, the bucket is asked
+    directly: a playlist either answers or it does not, and that is a better
+    source of truth than any list anyway.
+    """
+    print(f'  no local index; asking the bucket which cameras it has')
+    found = []
+    for i in range(1, limit + 1):
+        cam = f'cam{i:02d}'
+        req = urllib.request.Request(f'{BASE}/{cam}/index.m3u8',
+                                     headers={'User-Agent': UA}, method='HEAD')
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                if r.status == 200:
+                    found.append(cam)
+        except Exception:                                     # noqa: BLE001
+            continue
+    print(f'  {len(found)} found')
+    return found
+
+
 def camera_ids(repo_root: str, wanted: list[str]) -> list[str]:
     """Which cameras the archive holds, from the index the web app also reads."""
     if wanted:
@@ -60,9 +85,7 @@ def camera_ids(repo_root: str, wanted: list[str]) -> list[str]:
     if os.path.isfile(path):
         with open(path, encoding='utf-8') as f:
             return sorted(json.load(f))
-    # Running from the archive alone, without the web app's files beside it.
-    print(f'  no fallback-index.json at {path}; name cameras with --cameras')
-    return []
+    return discover()
 
 
 def fetch(cam: str, out_dir: str) -> tuple[bool, float]:
