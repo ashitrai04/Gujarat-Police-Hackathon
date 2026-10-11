@@ -514,6 +514,26 @@ const STEPS: Step[] = [
     },
   },
   {
+    id: 'ask-rider',
+    title: 'The same box, an enforcement question',
+    desc:
+      'Helmet compliance is the question a traffic department asks most, and it is '
+      + 'also the hardest kind here. "Without" is not something a detector can be '
+      + 'asked for — a frame of nine helmeted riders and one bare head looks almost '
+      + 'identical to a frame of ten, so the ranking leans on resemblance rather than '
+      + 'proof. It brings the right frames up to look at; the officer confirms by eye. '
+      + 'Measured on this estate it confirmed 4 of 10, against 7 for a described scene.',
+    hold: 7000,
+    early: true,
+    light: ['ask-dock'],
+    run: async (c) => {
+      await c.type('ask-prompt', 'a bike without helmet');
+      await c.wait(400);
+      await c.click('ask-go');
+      await c.wait(9000);
+    },
+  },
+  {
     id: 'ask-frame',
     title: 'The frame, full size, and where it happened',
     desc:
