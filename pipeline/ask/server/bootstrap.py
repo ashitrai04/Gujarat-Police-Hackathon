@@ -525,13 +525,45 @@ def _start_ollama(wait=90):
         print('    Ollama already up')
         return True
 
+    # Checked before launching, because every one of these produces the same
+    # silent non-start, and the launch itself cannot report which.
+    log = f'{HOME}/ollama.log'
+    problems = []
+    if not os.path.isfile(OLLAMA):
+        problems.append(f'no binary at {OLLAMA} - setup() did not finish')
+    elif not os.access(OLLAMA, os.X_OK):
+        problems.append(f'{OLLAMA} is not executable')
+    else:
+        # The binary existing is not the same as the binary running. A volume
+        # mounted noexec, or a partial download, both leave a file that looks
+        # perfectly fine and cannot start.
+        rc, out = sh(f'{OLLAMA} --version 2>&1 | head -2', quiet=True)
+        if rc != 0:
+            problems.append(f'{OLLAMA} will not execute: {out.strip()[:120]}')
+    if not os.path.isfile(f'{HOME}/env.sh'):
+        problems.append(f'no {HOME}/env.sh - it is sourced for the model path')
+    if problems:
+        print(' cannot start')
+        for p in problems:
+            print(f'  !! {p}')
+        return False
+
     print('==> starting Ollama', end='', flush=True)
+    # The log is created here so there is always something to show. Previously
+    # the redirect was attached to the far side of an `&&`: when env.sh was
+    # missing the whole chain short-circuited, no file was ever opened, and
+    # the failure reported "(no log written)" - which reads as the daemon
+    # dying silently rather than as a command that never ran.
+    with open(log, 'a') as f:
+        f.write(f'--- launch attempt {time.strftime("%Y-%m-%dT%H:%M:%S")} ---\n')
+
     # Not through sh(): that captures stdout, and a detached grandchild holding
     # the pipe open would block the read forever. Nothing here writes to the
-    # pipe at all.
+    # pipe at all. `;` rather than `&&` so a problem sourcing env.sh still
+    # leaves the daemon's own error in the log.
     subprocess.Popen(
-        f'source {HOME}/env.sh && exec setsid {OLLAMA} serve '
-        f'>> {HOME}/ollama.log 2>&1 < /dev/null &',
+        f'[ -f {HOME}/env.sh ] && source {HOME}/env.sh; '
+        f'exec setsid {OLLAMA} serve >> {log} 2>&1 < /dev/null &',
         shell=True, executable='/bin/bash',
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True)
