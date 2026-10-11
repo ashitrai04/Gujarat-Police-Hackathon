@@ -922,10 +922,31 @@ def tunnel(domain=None, authtoken=None):
         f.write(url)
 
     # Confirm it reaches back, rather than reporting a URL nobody has tried.
-    time.sleep(2)
-    rc, out = sh(f'curl -s -o /dev/null -w "%{{http_code}}" -m 25 '
-                 f'-H "x-ask-token: {_token()}" "{url}/health"', quiet=True)
-    print(f'  {url}   (health: {out.strip() or "no answer"})')
+    #
+    # Retried rather than probed once. With a reserved domain the URL is known
+    # before the agent has finished registering it, and ngrok answers 404 for
+    # an endpoint it has not bound yet -- so a single shot two seconds in
+    # reported a dead tunnel that was merely still connecting, which is the
+    # worst moment to be told something is broken.
+    code = ''
+    print('  checking', end='', flush=True)
+    for attempt in range(15):
+        _, out = sh(f'curl -s -o /dev/null -w "%{{http_code}}" -m 15 '
+                    f'-H "x-ask-token: {_token()}" '
+                    f'-H "ngrok-skip-browser-warning: 1" "{url}/health"',
+                    quiet=True)
+        code = out.strip()
+        if code == '200':
+            break
+        print('.', end='', flush=True)
+        time.sleep(3)
+    print()
+    print(f'  {url}   (health: {code or "no answer"})')
+    if code != '200':
+        print('  !! not answering yet. The agent may still be connecting, or')
+        print('     another ngrok agent holds this domain -- the free tier')
+        print('     allows one online at a time. Check with:')
+        print(f'       tail -n 20 {HOME}/ngrok.log')
     print()
     print('  Vercel > Settings > Environment Variables, then redeploy once:')
     print(f'    VITE_ASK_API_URL={url}')
