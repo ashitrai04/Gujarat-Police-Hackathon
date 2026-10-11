@@ -73,11 +73,26 @@ try {
 
     Write-Host ""
     Write-Host "==============================================================="
+    # Tee to a file as well as the window.
+    #
+    # Start-Transcript does NOT capture this: the worker is a native process,
+    # and a transcript only records what PowerShell itself writes. Wrapping the
+    # launch in one records the banner and nothing else, which looks like a
+    # worker producing no output when it is in fact working normally.
+    #
+    # The streams are merged inside cmd, not by PowerShell. In 5.1, letting
+    # PowerShell redirect a native command's stderr wraps every line in a
+    # NativeCommandError, so a plain warning arrives looking like a crash.
+    # Merging at the OS level keeps the output exactly as the worker wrote it,
+    # with stderr interleaved in the right order.
+    $log = Join-Path $root 'worker.log'
     Write-Host " Worker running: plates + $Events, $Seconds s per camera"
     Write-Host " Writing to Supabase. Ctrl-C stops it."
+    Write-Host " Log: $log"
     Write-Host "==============================================================="
     Write-Host ""
-    & $py -u live_worker.py --seconds $Seconds --events $Events
+    & cmd /c "`"$py`" -u live_worker.py --seconds $Seconds --events $Events 2>&1" |
+        Tee-Object -FilePath $log -Append
 }
 finally {
     Pop-Location
