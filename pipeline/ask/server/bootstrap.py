@@ -1526,6 +1526,9 @@ def serve_forever(check_every=120, hours=11.5):
     deadline = started + hours * 3600
     passes = 0
     repaired = 0
+    # start() is attempted at most once: if it does not take, repeating an
+    # eight-minute wait every cycle would hide the problem behind a stall.
+    started_once = False
 
     print(f'==> holding the session open for up to {hours:g}h, '
           f'checking every {check_every}s')
@@ -1545,12 +1548,27 @@ def serve_forever(check_every=120, hours=11.5):
             if _service_up():
                 up.append('search')
             elif os.path.isdir(INDEX):
-                rc, _ = sh('pgrep -f guard.sh', quiet=True)
-                if rc != 0:
-                    sh(f'source {HOME}/env.sh && setsid nohup bash '
-                       f'{HOME}/guard.sh > /dev/null 2>&1 < /dev/null &',
-                       quiet=True)
-                    fixed.append('search')
+                # guard.sh is written by start(). Relaunching a script that
+                # was never written fails silently every cycle, so if it is
+                # absent the service has simply never been started -- do that
+                # once rather than report a restart that cannot happen.
+                if not os.path.isfile(f'{HOME}/guard.sh'):
+                    if not started_once:
+                        started_once = True
+                        print('  search service was never started; starting it',
+                              flush=True)
+                        start()
+                        fixed.append('search')
+                    else:
+                        print('  !! search still down and start() did not take'
+                              ' -- run logs() in another cell', flush=True)
+                else:
+                    rc, _ = sh('pgrep -f guard.sh', quiet=True)
+                    if rc != 0:
+                        sh(f'source {HOME}/env.sh && setsid nohup bash '
+                           f'{HOME}/guard.sh > /dev/null 2>&1 < /dev/null &',
+                           quiet=True)
+                        fixed.append('search')
 
             if _anpr_running():
                 up.append('worker')
