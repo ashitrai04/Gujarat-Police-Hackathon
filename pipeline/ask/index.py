@@ -128,10 +128,17 @@ def main() -> None:
     from PIL import Image
     from . import embed
 
+    # Not only .mp4. The archive is HLS, so a downloaded clip is concatenated
+    # MPEG-TS and keeps the .ts extension it actually is. Accepting one
+    # extension meant a directory full of perfectly good footage indexed as
+    # "no videos found", which reads as a broken download rather than a
+    # filter that is too narrow.
+    exts = ('.mp4', '.ts', '.mkv', '.mov', '.m4v')
     files: list[str] = []
     for v in args.videos:
         if os.path.isdir(v):
-            files += [os.path.join(v, f) for f in sorted(os.listdir(v)) if f.endswith('.mp4')]
+            files += [os.path.join(v, f) for f in sorted(os.listdir(v))
+                      if f.lower().endswith(exts)]
         else:
             files.append(v)
     if not files:

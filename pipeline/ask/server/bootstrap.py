@@ -57,6 +57,19 @@ REPO = os.path.expanduser(os.environ.get('SENTINEL_REPO', '~/sentinel-command-ce
 GIT_URL = os.environ.get(
     'SENTINEL_GIT', 'https://github.com/ashitrai04/Gujarat-Police-Hackathon.git')
 
+# What counts as a recording. The archive downloads as concatenated MPEG-TS
+# and keeps the .ts extension, so a .mp4-only check finds an empty directory
+# and reports "no footage" over a folder with a gigabyte in it.
+VIDEO_EXTS = ('.mp4', '.ts', '.mkv', '.mov', '.m4v')
+
+
+def videos_in(path) -> list:
+    if not os.path.isdir(path):
+        return []
+    return sorted(f for f in os.listdir(path)
+                  if f.lower().endswith(VIDEO_EXTS))
+
+
 VENV = f'{HOME}/venv'
 # Resolved by _ensure_python(); not every host can build a venv the usual way.
 PY = f'{VENV}/bin/python'
@@ -548,15 +561,15 @@ def build_index(footage=None, every=1.0):
     """
     _ensure_python()
     src = footage or FOOTAGE
-    vids = [f for f in os.listdir(src) if f.lower().endswith('.mp4')] \
+    vids = videos_in(src) \
         if os.path.isdir(src) else []
     if not vids and src == FOOTAGE and _stray_footage():
         print('==> uploads landed outside the footage directory; collecting them')
         collect_footage()
-        vids = [f for f in os.listdir(src) if f.lower().endswith('.mp4')]
+        vids = videos_in(src)
 
     if not vids:
-        print(f'!! no .mp4 files in {src}')
+        print(f'!! no recordings in {src}')
         print('   upload them with the Jupyter file browser, or from your machine:')
         print(f'     rsync -av --progress <local-folder>/ '
               f'{os.environ.get("USER","user")}@{_hostname()}:{src}/')
@@ -1391,15 +1404,15 @@ def start_all(events='crowd,fire,accident', domain=None, seconds=30,
         _start_ollama()
     print('  ollama: ' + ('up' if _ollama_up() else 'DOWN — ollama_debug()'))
 
-    print('\n[4/7] search index')
+    print('\n[4/7] footage and search index')
     if rebuild_index or not os.path.isdir(INDEX):
-        vids = [f for f in os.listdir(FOOTAGE)
-                if f.lower().endswith('.mp4')] if os.path.isdir(FOOTAGE) else []
-        if vids:
+        if not videos_in(FOOTAGE):
+            get_footage()
+        if videos_in(FOOTAGE):
             build_index()
         else:
-            print(f'  no .mp4 in {FOOTAGE} and no index, so prompt search')
-            print('  cannot start. Everything else below still will.')
+            print(f'  no recordings in {FOOTAGE} and none could be fetched,')
+            print('  so prompt search cannot start. Everything else still will.')
     else:
         print(f'  present at {INDEX}')
 
@@ -1619,6 +1632,33 @@ def tunnel_cf(wait=60):
     print('  Vercel variable. Clearing it later is /?ask=off, which falls')
     print('  back to the GPU server.')
     return url
+
+
+def get_footage(cameras=''):
+    """Download the recorded archive, so there is something to index.
+
+    A fresh host has no footage, and without footage there is no index and so
+    no prompt search -- which is the part worth showing. The archive is served
+    from a public bucket and needs no credentials, so there is no reason to
+    make this a manual step.
+
+    It is also the right footage: 1080p daylight, which is what the pipeline
+    was measured against. The live estate at night produces almost no plates,
+    whatever the code does.
+    """
+    script = f'{PIPELINE}/fetch_archive.py'
+    if not os.path.isfile(script):
+        print('!! fetch_archive.py missing -- git pull in the repo first')
+        return False
+    have = videos_in(FOOTAGE)
+    if have:
+        print(f'  {len(have)} recording(s) already in {FOOTAGE}')
+        return True
+    os.makedirs(FOOTAGE, exist_ok=True)
+    flag = f' --cameras {cameras}' if cameras else ''
+    sh(f'source {HOME}/env.sh 2>/dev/null; cd {PIPELINE} && '
+       f'{PY} fetch_archive.py --out "{FOOTAGE}"{flag}')
+    return bool(videos_in(FOOTAGE))
 
 
 def anpr_setup():
@@ -2083,6 +2123,7 @@ print('creds:  set_credentials(...)   creds_check()  — shape, not secrets')
 print('anpr :  anpr_setup()  anpr_start()  anpr_status()  anpr_logs()  anpr_stop()')
 print('diag :  capture_check(cam)  -- why one capture produced no video')
 print('        anpr_test()         -- plate accuracy on a recording')
+print('        get_footage()       -- download the daylight archive')
 print('hold :  serve_forever()     -- keep a notebook session alive')
 print('        ffmpeg_check()      -- which ffmpeg capability is broken')
 print('scene:  events_live()       -- all three on a LIVE camera, now')
