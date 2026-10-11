@@ -382,8 +382,13 @@ def ensure_local(video: str, seconds: int = 30, tmp: str | None = None) -> str:
     sys.path.insert(0, PIPELINE_DIR)
     from run_batch import capture, grid_session
 
+    # Only the camera grid needs signing in to. The archive bucket is a public
+    # URL, and attempting a sign-in against it POSTs credentials to a host that
+    # never asked for them, then prints a failure that makes a working fetch
+    # look broken. Anything that is not the grid is fetched anonymously.
     host = 'https://' + video.split('/')[2] if video.startswith('http') else ''
-    session = grid_session(host) if host else None
+    is_grid = 'corp8.cloud' in host or video.startswith('rtsp://')
+    session = grid_session(host) if (host and is_grid) else None
     tmp = tmp or os.environ.get('SENTINEL_TMP', '/tmp')
     os.makedirs(tmp, exist_ok=True)
     # Named for the camera segment of the URL so two cameras cannot collide.
