@@ -100,7 +100,8 @@ export function DetectionView({
         {/* Not gated on there being events: an empty Scene tab is the honest
             answer to "is the crowd model running on this camera?", whereas a
             hidden tab looks like the feature does not exist. */}
-        <Tab active={mode === 'scene'} onClick={() => setMode('scene')} icon={Users}>
+        <Tab active={mode === 'scene'} onClick={() => setMode('scene')} icon={Users}
+          tour="scene-tab">
           Scene
         </Tab>
       </div>
@@ -250,16 +251,19 @@ export function DetectionView({
 }
 
 function Tab({
-  active, onClick, icon: Icon, disabled, children,
+  active, onClick, icon: Icon, disabled, children, tour,
 }: {
   active: boolean;
   onClick: () => void;
   icon: typeof Radio;
   disabled?: boolean;
   children: React.ReactNode;
+  /** Marks this tab for the guided walkthrough to find and click. */
+  tour?: string;
 }) {
   return (
     <button
+      data-tour={tour}
       onClick={onClick}
       disabled={disabled}
       className="flex items-center gap-1.5 rounded-[5px] px-2 py-[5px] text-[11px] font-medium transition-colors"

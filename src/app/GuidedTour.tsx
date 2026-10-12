@@ -232,7 +232,9 @@ function poiStep(layer: PoiLayer, title: string, desc: string): Step {
     id: `poi-${layer}`,
     title,
     desc,
-    hold: 4600,
+    // Shorter than the steps that have something still happening on
+    // screen. A reference layer is drawn the moment it is toggled.
+    hold: 2800,
     light: [`poi-${layer}`, 'map'],
     run: async (c) => {
       await c.click(`poi-${layer}`, { onlyIfOff: true });
@@ -309,7 +311,7 @@ const STEPS: Step[] = [
     desc:
       'The Gujarat boundary draws first: the frame every other layer is read '
       + 'against, and the line a vehicle crosses to leave the jurisdiction.',
-    hold: 4600,
+    hold: 3000,
     light: ['gis-state', 'map'],
     run: async (c) => {
       await c.click('gis-state', { onlyIfOff: true });
@@ -322,7 +324,7 @@ const STEPS: Step[] = [
     desc:
       'Thirty-three districts, each its own police jurisdiction. This is what turns '
       + '<b>a camera at Majevadi Gate</b> into <b>a camera Junagadh is answerable for</b>.',
-    hold: 4600,
+    hold: 3000,
     light: ['gis-districts', 'map'],
     run: async (c) => { await c.click('gis-districts', { onlyIfOff: true }); },
   },
@@ -332,7 +334,7 @@ const STEPS: Step[] = [
     desc:
       '<b>11,079</b> highway segments. They carry the traffic that leaves the state, '
       + 'so they are where interception is possible.',
-    hold: 4600,
+    hold: 3000,
     light: ['gis-highways', 'map'],
     run: async (c) => { await c.click('gis-highways', { onlyIfOff: true }); },
   },
@@ -342,7 +344,7 @@ const STEPS: Step[] = [
     desc:
       '<b>12,404</b> state and major roads, shown here across Saurashtra. A traced '
       + 'vehicle is matched onto this network rather than drawn as a straight line.',
-    hold: 4600,
+    hold: 3000,
     light: ['gis-roads', 'map'],
     run: async (c) => {
       await c.click('gis-roads', { onlyIfOff: true });
@@ -397,7 +399,10 @@ const STEPS: Step[] = [
       'The wall opens as its own screen, one feed large, four up, or filling the space. '
       + 'Tiles stay uniform, playable cameras sort first, and a feed that cannot be '
       + 'reached falls back to recorded footage, labelled <b>RECORDED</b>.',
-    hold: 4200,
+    // Longer than the layer steps, and deliberately so: this one has to
+    // wait for pictures before the layouts mean anything. The time comes
+    // from the reference layers, which needed none of it.
+    hold: 11000,
     early: true,
     light: ['wall', 'dock'],
     run: async (c) => {
@@ -447,6 +452,30 @@ const STEPS: Step[] = [
       c.set.setTourView(JUNAGADH);
       await c.wait(900);
       await c.click('source-archive');
+    },
+  },
+  {
+    id: 'scene',
+    title: 'The same camera, read as a scene',
+    desc:
+      'Plates are half the job. Every clip is also scored for <b>crowd</b>, <b>fire</b> '
+      + 'and <b>accident</b>, and the rows say which is which. Crowd is a detector — '
+      + 'people are found and counted, and the strip is six hours of that camera, one '
+      + 'bar per pass. Fire and accident are screeners: they rank frames worth looking '
+      + 'at and are labelled <b>screened</b>, never presented as a finding.',
+    hold: 9000,
+    early: true,
+    light: ['panel'],
+    run: async (c) => {
+      await c.click('scene-tab');
+      // The strip and the rows are two queries against the database, and on
+      // a cold panel they arrive a beat apart. Wait for something rather
+      // than narrating an empty tab.
+      await c.until(
+        () => !!document.querySelector('[data-tour="panel"] img, [data-tour="panel"] [title*="people"]'),
+        6000,
+      );
+      await c.wait(1200);
     },
   },
 
