@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import io
 import os
 import sys
 import time
@@ -345,6 +346,38 @@ class Registry:
 
 
 
+def keep_plate_reads() -> None:
+    """Make the pipeline carry its read count out with each plate.
+
+    Every detection in the database has frames_voted and plate_confidence
+    null, so the interface never shows how many frames agreed on a number --
+    and that count is the whole answer to "the plate is blurred, how do you
+    know?". One frame of a moving plate is often unreadable; the number comes
+    from ten of them voting, and without the count a reader cannot tell a
+    ten-frame plate from a one-frame guess.
+
+    The pipeline computes it. It builds each record with "reads", and even
+    sorts plate_list by that value -- then drops the field when copying the
+    records into the list, one expression before the worker reads it.
+
+    Patched at the source because the pipeline is a separate, gitignored
+    checkout and the value is built inside a function whose locals are not
+    reachable from here. Idempotent, and a no-op once the upstream carries
+    it: a copy that already has the field is left alone.
+    """
+    path = os.path.join(PIPELINE_DIR, 'sentinel_pipeline.py')
+    if not os.path.isfile(path):
+        return
+    src = io.open(path, encoding='utf-8').read()
+    old = '"time":r["timestamp_s"],"thumbnail":r["thumbnail"]}'
+    if '"reads":r["reads"]' in src or old not in src:
+        return
+    io.open(path, 'w', encoding='utf-8', newline='\n').write(
+        src.replace(old, '"time":r["timestamp_s"],"thumbnail":r["thumbnail"],'
+                         '"reads":r["reads"]}'))
+    print('[worker] patched sentinel_pipeline.py to keep the plate read count')
+
+
 def use_stronger_detector(weights: str, imgsz: int) -> None:
     """Swap the vehicle detector and widen the inference size.
 
@@ -453,6 +486,7 @@ def default_profile() -> str:
 def analyse(video: str, camera_id: str, *, tiled=False, frame_skip=2,
             mode='auto', night_model=None, profile=None) -> dict:
     sys.path.insert(0, PIPELINE_DIR)
+    keep_plate_reads()
     use_paddle_ocr()
     if tiled:
         use_tiled_detection()
