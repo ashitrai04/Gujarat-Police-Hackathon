@@ -12,6 +12,12 @@
     Run this after a reboot. The two processes it starts survive the terminal
     closing but not a logout.
 
+.NOTES
+    Run this from YOUR OWN PowerShell window. The two processes it starts are
+    children of the window that launched them: they outlive that window, but
+    not a logout or a restart. They start minimised rather than hidden, so a
+    rig that has died is one you can see has died.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\START-DEMO.ps1
     .\START-DEMO.ps1 -Status
@@ -86,7 +92,7 @@ if (Probe "http://127.0.0.1:$PORT/health") {
         -ArgumentList '-u','-m','ask.serve','--index',$index,'--host','127.0.0.1','--port',"$PORT" `
         -WorkingDirectory $pipeline `
         -RedirectStandardOutput "$env:TEMP\ask.out" -RedirectStandardError "$env:TEMP\ask.err" `
-        -WindowStyle Hidden | Out-Null
+        -WindowStyle Minimized | Out-Null
     # Loading SigLIP takes the better part of a minute on a cold start.
     Write-Host "      loading" -NoNewline
     $body = $null
@@ -116,7 +122,7 @@ if (Probe "https://$DOMAIN/health") {
     Start-Process -FilePath $ngrok `
         -ArgumentList 'http',"$PORT",'--url',"https://$DOMAIN",'--log','stdout' `
         -RedirectStandardOutput "$env:TEMP\ngrok.out" -RedirectStandardError "$env:TEMP\ngrok.err" `
-        -WindowStyle Hidden | Out-Null
+        -WindowStyle Minimized | Out-Null
     Write-Host "      connecting" -NoNewline
     $ok = $null
     foreach ($i in 1..15) {
