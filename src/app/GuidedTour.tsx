@@ -48,7 +48,33 @@ interface Ctx {
   /** Replace the caption text, e.g. when an action could not be completed. */
   say(html: string): void;
   wait(ms: number): Promise<void>;
+  /**
+   * Wait until `done()` is true, or `timeout` passes. Returns whether it
+   * became true.
+   *
+   * A fixed wait is a guess about someone else's network. A feed that takes
+   * four seconds on the presenter's laptop takes twelve on hall wi-fi, and
+   * the tour moves on regardless — so the one thing the step exists to show
+   * is the one thing nobody sees.
+   */
+  until(done: () => boolean, timeout?: number): Promise<boolean>;
   live(): boolean;
+}
+
+/**
+ * How many wall tiles have stopped loading — either a frame is decoding or
+ * the archive fallback has taken over.
+ *
+ * readyState >= 2 is HAVE_CURRENT_DATA: there is a frame to show. The
+ * RECORDED badge is the other settled state, and it matters as much: a tile
+ * that fell back has finished, and waiting for live video it will never get
+ * would stall the tour on exactly the cameras the fallback exists for.
+ */
+function tilesSettled(): number {
+  const videos = Array.from(document.querySelectorAll('video'));
+  const playing = videos.filter((v) => v.readyState >= 2).length;
+  const recorded = document.querySelectorAll('[data-fallback="1"]').length;
+  return playing + recorded;
 }
 
 interface Step {
@@ -378,11 +404,24 @@ const STEPS: Step[] = [
       c.set.closePanel();
       c.set.setWall(['cam08', 'cam10', 'cam01', 'cam05']);
       await c.click('wall');
-      await c.wait(900);
+
+      // Wait for pictures before showing the layouts off.
+      //
+      // The point of this step is that tiles stay uniform and a dead feed
+      // falls back to recorded footage. Cycling layouts over four grey
+      // "Connecting…" boxes demonstrates neither. Two settled tiles is
+      // enough to make the grid read as a grid; the rest can arrive while
+      // the layouts change.
+      await c.until(() => tilesSettled() >= 2, 15000);
+      await c.wait(600);
+
       // The layouts: one feed large, a 2×2 grid, then back to filling the space.
       for (const n of [1, 4, 0]) {
         await c.click(`layout-${n}`);
-        await c.wait(1300);
+        // Switching layout re-mounts the tiles, so each one reloads. Wait
+        // again rather than assuming the previous wait still holds.
+        await c.until(() => tilesSettled() >= 1, 6000);
+        await c.wait(1100);
       }
     },
   },
@@ -846,6 +885,18 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
       qc,
       live: () => live,
       wait: async (ms) => { if (live) await wait(ms); },
+      until: async (done, timeout = 12000) => {
+        if (!live) return false;
+        const deadline = Date.now() + timeout;
+        while (live && Date.now() < deadline) {
+          if (done()) return true;
+          await wait(250);
+        }
+        // Timing out is not an error. A feed that never arrives is a thing
+        // the tour is allowed to show, and stopping here would be worse than
+        // carrying on with whatever is on screen.
+        return false;
+      },
       say: (html) => { if (live) setDesc(html); },
       light: async (keys) => {
         if (!live) return;

@@ -378,6 +378,11 @@ export function CameraPlayer({
             /* Deliberately the loudest label on the tile. Recorded footage
                shown in a control room must never be mistaken for live. */
             <span
+              /* Also how the walkthrough knows this tile has finished
+                 loading. A tile on the archive is settled — waiting for live
+                 video it will never get would stall the tour on exactly the
+                 cameras the fallback exists for. */
+              data-fallback="1"
               className="mono ml-auto flex shrink-0 items-center gap-1 rounded-[3px] px-1.5 py-[1px] text-[9px] font-bold"
               style={{ background: '#F5A524', color: '#1A1206' }}
               title={`Live feed unavailable — playing recorded footage captured ${ARCHIVE_DATE}. This is NOT a live view.`}
