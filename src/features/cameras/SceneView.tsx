@@ -52,7 +52,11 @@ function when(iso: string): string {
 function CrowdStrip({ cameraId }: { cameraId: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ['scene.crowd', cameraId],
-    queryFn: () => api.crowdSeries(cameraId, 6),
+    // A day, not a shift. Six hours covered only what happened since the
+    // worker last came round, so a camera visited this morning showed an
+    // empty strip all afternoon -- which reads as 'nothing detected'
+    // rather than 'nothing recent', and those mean opposite things.
+    queryFn: () => api.crowdSeries(cameraId, 24),
     refetchInterval: 60_000,
   });
 
@@ -72,7 +76,7 @@ function CrowdStrip({ cameraId }: { cameraId: string }) {
         className="flex h-[46px] items-center justify-center rounded-[5px] text-[10px]"
         style={{ background: 'var(--surface-2)', color: 'var(--text-mute)' }}
       >
-        No counts recorded in the last 6 hours
+        No counts recorded in the last 24 hours
       </div>
     );
   }
@@ -82,7 +86,7 @@ function CrowdStrip({ cameraId }: { cameraId: string }) {
       <div className="mb-1 flex items-baseline justify-between">
         <span className="text-[10px] uppercase tracking-wide"
           style={{ color: 'var(--text-mute)' }}>
-          People · last 6h
+          People · last 24h
         </span>
         <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-mute)' }}>
           peak {peak}

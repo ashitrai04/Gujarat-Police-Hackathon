@@ -130,7 +130,7 @@ export async function listSceneEvents(q: SceneQuery = {}): Promise<SceneEvent[]>
  */
 export async function crowdSeries(
   cameraId: string,
-  hours = 6,
+  hours = 24,
 ): Promise<{ at: string; people: number }[]> {
   if (!db) return [];
   const from = new Date(Date.now() - hours * 3600_000).toISOString();
