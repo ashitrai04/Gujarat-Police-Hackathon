@@ -9,6 +9,15 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+# Anything else that holds real values: a pull from the host,
+# a backup taken before an edit, a copy made while debugging.
+# Only .env and .env.local were covered, so a `vercel env pull`
+# landed a file of live credentials that git would have taken.
+.env.vercel
+.env.backup
+.env.*
+!.env.example
+!.env.worker.example
 *.pem
 
 # logs (dev.log embeds the Mapbox token in proxied URLs)
